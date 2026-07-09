@@ -2,9 +2,38 @@
   "name": "mergev",
   "version": "0.1.0",
   "description": "Terminal merge conflict resolver with a three-pane visual workflow.",
+  "bin": {
+    "mergev": "./dist/cli.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsx src/cli/index.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
   "keywords": [],
   "author": "",
   "license": "MIT",
   "type": "module",
-  "private": true
+  "private": true,
+  "dependencies": {
+    "commander": "^14.0.0",
+    "execa": "^9.6.0",
+    "ink": "^6.3.1",
+    "node-diff3": "^3.1.2",
+    "oxc-parser": "^0.74.0",
+    "react": "^19.1.0",
+    "yaml": "^2.8.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.10",
+    "@types/react": "^19.1.8",
+    "tsup": "^8.5.0",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  }
 }
