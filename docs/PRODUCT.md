@@ -2,15 +2,15 @@
 
 ## One-Line Introduction
 
-Mergev is a terminal Git merge conflict resolver with a three-pane visual workflow, helping developers review, choose, edit, validate, and finish conflicted merges without leaving the command line.
+Mergev is a desktop Git merge conflict resolver with a three-pane visual workflow. Developers install the app once, optionally add a global `mergev` command from the app menu, then open the conflict UI from any repository directory.
 
 ## Chinese Introduction
 
-Mergev 是一个在命令行里提供三栏可视化流程的 Git 冲突解决工具，让开发者像在 WebStorm 里一样逐块选择、编辑并校验最终合并结果。
+Mergev 是一个提供三栏可视化流程的 Git 冲突解决桌面工具。安装客户端后，可在窗口菜单中把 `mergev` 写入全局 PATH，以便在任意项目目录快速打开冲突解决界面。
 
 ## Product Positioning
 
-Mergev focuses on one painful workflow: resolving Git conflicts. It brings the core WebStorm merge dialog experience into a terminal UI:
+Mergev focuses on one painful workflow: resolving Git conflicts. It brings the core WebStorm merge dialog experience into a focused desktop app that can be launched from the terminal:
 
 - Three-pane visual merge view
 - Conflict-by-conflict navigation
@@ -18,8 +18,9 @@ Mergev focuses on one painful workflow: resolving Git conflicts. It brings the c
 - Live result preview
 - Validation before marking a file as resolved
 - Git flow awareness for merge, rebase, and cherry-pick
+- Optional global `mergev` CLI installed from the app menu
 
-The goal is not to replace a full IDE. The goal is to make conflict resolution fast, visible, and reliable for developers who work primarily in the terminal.
+The goal is not to replace a full IDE. The goal is to make conflict resolution fast, visible, and reliable for developers who start from the terminal but want a real visual merge UI.
 
 ## Target Users
 
@@ -425,6 +426,18 @@ Important constraints:
 
 ## CLI Design
 
+The CLI is not a separate Node package. Users install the Mergev desktop app, then use the native menu:
+
+- **工具 → 安装 mergev 命令到 PATH**
+- **工具 → 从 PATH 移除 mergev 命令**
+
+Installation target:
+
+- macOS / Linux: `~/.local/bin/mergev`
+- Windows: `%USERPROFILE%\.local\bin\mergev.cmd`
+
+The installed entry is a small wrapper that captures the current working directory as `MERGEV_CWD` and launches the Mergev app binary. This lets developers run `mergev` inside a conflicted repository and open the UI against that project.
+
 ### Basic Commands
 
 ```bash
@@ -500,21 +513,20 @@ Mergev should define clear states:
 
 Recommended stack:
 
-- Node.js
-- TypeScript
-- Ink for terminal UI
-- execa or child_process for Git commands
+- Tauri 2 desktop shell
+- React + TypeScript frontend
+- Rust backend for Git operations, CLI install/uninstall, and native menus
 - diff library for line and word diffs
 - parser libraries for optional file validation
 
 High-level modules:
 
 ```text
-src/
-  cli/
-  git/
-  merge/
-  ui/
+src/                 # React UI
+src-tauri/src/
+  cli.rs             # install/uninstall global mergev command
+  git/               # repository and conflict detection
+  merge/             # conflict model and decisions
   validation/
   config/
   session/
@@ -603,14 +615,14 @@ The MVP is successful if a developer can:
 ### Milestone 0: Project Setup
 
 - Package metadata
-- TypeScript setup
-- CLI entry placeholder
+- Tauri + React + TypeScript setup
+- Native menu: install/uninstall global `mergev` command
 - Testing setup
 - Basic repository structure
 
 ### Milestone 1: Git Conflict Detection
 
-- Detect repository
+- Detect repository from `MERGEV_CWD` or current directory
 - List unmerged files
 - Read stage 1/2/3 content
 - Detect current Git operation state
@@ -623,14 +635,14 @@ The MVP is successful if a developer can:
 - Generate result content
 - Unit tests for conflict decisions
 
-### Milestone 3: Terminal UI MVP
+### Milestone 3: Desktop UI MVP
 
 - File list
 - Three-pane file view
 - Conflict navigation
 - Accept ours/theirs/both
 - Result preview
-- Help/status bar
+- Status/help affordances
 
 ### Milestone 4: Save and Validate
 
@@ -646,7 +658,7 @@ The MVP is successful if a developer can:
 - Undo/reset
 - Session recovery
 - Custom check command
-- Better narrow-terminal layout
+- Responsive layout for smaller windows
 
 ### Milestone 6: Smart Conflict Handling
 
@@ -666,7 +678,7 @@ The MVP is successful if a developer can:
 
 - Should `mergev` run `git add` by default after successful save?
 - Should `mergev continue` execute Git continuation commands or only suggest them?
-- Should manual editing happen inside Ink first, or should MVP rely on `$EDITOR`?
+- Should manual editing happen in-app first, or should MVP rely on `$EDITOR`?
 - How much non-conflicting context should be shown by default?
 - Should lockfiles be treated as special files in MVP?
 - Should config live in `.mergev.json` or `package.json` first?
