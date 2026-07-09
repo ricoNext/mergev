@@ -1,0 +1,10 @@
+{
+  "name": "mergev",
+  "version": "0.1.0",
+  "description": "Terminal merge conflict resolver with a three-pane visual workflow.",
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "type": "module",
+  "private": true
+}
