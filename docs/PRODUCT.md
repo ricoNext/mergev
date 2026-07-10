@@ -438,6 +438,23 @@ Installation target:
 
 The installed entry is a small wrapper that captures the current working directory as `MERGEV_CWD` and launches the Mergev app binary. This lets developers run `mergev` inside a conflicted repository and open the UI against that project.
 
+### CLI repository gate
+
+When launched via the `mergev` CLI (`MERGEV_CWD` is set), Mergev validates the working directory **before** opening the desktop UI:
+
+1. Run `git rev-parse --show-toplevel` in `MERGEV_CWD`
+2. If the directory is not a Git repository (or `git` is missing), print an error to stderr and exit with code `1`
+3. If validation succeeds, start the desktop app
+
+Dock / Finder launches do not set `MERGEV_CWD` and skip this gate.
+
+Example terminal output:
+
+```text
+错误: 当前目录不是 Git 仓库: /path/to/dir
+请在仓库根目录或子目录中执行 mergev。
+```
+
 ### Basic Commands
 
 ```bash
@@ -525,8 +542,9 @@ High-level modules:
 src/                 # React UI
 src-tauri/src/
   cli.rs             # install/uninstall global mergev command
-  git/               # repository and conflict detection
-  merge/             # conflict model and decisions
+  git.rs             # repository detection and CLI repo gate
+  workspace.rs       # conflict listing, three-way load, save/stage
+  merge/             # richer conflict model (planned)
   validation/
   config/
   session/
@@ -637,12 +655,15 @@ The MVP is successful if a developer can:
 
 ### Milestone 3: Desktop UI MVP
 
-- File list
-- Three-pane file view
-- Conflict navigation
-- Accept ours/theirs/both
-- Result preview
-- Status/help affordances
+- Conflicts list screen first (WebStorm-like):
+  - Headline for merge/rebase/cherry-pick/revert
+  - File table: Name, Yours status, Theirs status
+  - Accept Yours / Accept Theirs / Merge…
+- Merge screen (three-pane) opened only via Merge…
+  - Block navigation and accept yours/theirs/both
+  - Save & Stage
+  - Back to Conflicts list
+- Empty state when the repository has no conflicts
 
 ### Milestone 4: Save and Validate
 

@@ -17,6 +17,13 @@ bun install
 bun run dev
 ```
 
+在 Git 仓库目录启动后，客户端会进入两步流程：
+
+1. **Conflicts 文件列表**：Accept Yours / Accept Theirs / Merge…
+2. **Merge 三栏**：逐块选择后 Save & Stage，可返回 Conflicts
+
+无冲突时显示简洁空状态。通过已安装的 `mergev` 命令启动时，仍会先做仓库门禁（非仓库只在终端报错）。
+
 ## 安装命令行入口
 
 1. 启动 Mergev 客户端
@@ -29,7 +36,14 @@ mergev
 
 命令会安装到 `~/.local/bin/mergev`（Windows 为 `%USERPROFILE%\.local\bin\mergev.cmd`）。
 
-若提示该目录不在 PATH 中，把下面一行加入 shell 配置后重新打开终端：
+在仓库目录执行 `mergev` 会打开客户端。若当前目录不是 Git 仓库，则只在终端报错并退出，不会打开窗口：
+
+```text
+错误: 当前目录不是 Git 仓库: /path/to/dir
+请在仓库根目录或子目录中执行 mergev。
+```
+
+若提示 `~/.local/bin` 不在 PATH 中，把下面一行加入 shell 配置后重新打开终端：
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"

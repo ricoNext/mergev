@@ -122,8 +122,14 @@ fn is_mergev_cli(link: &Path) -> Result<bool, String> {
 
 #[cfg(unix)]
 fn create_cli_entry(exe: &Path, link: &Path) -> Result<(), String> {
+    // Thin launcher: capture cwd, then hand off to the app binary.
+    // The binary enforces the Git-repo gate and prints terminal errors.
     let script = format!(
-        "#!/bin/sh\nexport MERGEV_CWD=\"$(pwd)\"\nexec \"{}\" \"$@\"\n",
+        concat!(
+            "#!/bin/sh\n",
+            "export MERGEV_CWD=\"$(pwd)\"\n",
+            "exec \"{}\" \"$@\"\n"
+        ),
         escape_for_double_quotes(&exe.display().to_string())
     );
     fs::write(link, script).map_err(|e| format!("写入 {} 失败: {e}", link.display()))?;
@@ -139,8 +145,24 @@ fn create_cli_entry(exe: &Path, link: &Path) -> Result<(), String> {
 
 #[cfg(windows)]
 fn create_cli_entry(exe: &Path, link: &Path) -> Result<(), String> {
+    // Pre-check in the .cmd so errors show even when the GUI binary has no console.
     let script = format!(
-        "@echo off\r\nset MERGEV_CWD=%CD%\r\n\"{}\" %*\r\n",
+        concat!(
+            "@echo off\r\n",
+            "set MERGEV_CWD=%CD%\r\n",
+            "where git >nul 2>&1\r\n",
+            "if errorlevel 1 (\r\n",
+            "  echo 错误: 未找到 git，请先安装 Git。\r\n",
+            "  exit /b 1\r\n",
+            ")\r\n",
+            "git -C \"%MERGEV_CWD%\" rev-parse --show-toplevel >nul 2>&1\r\n",
+            "if errorlevel 1 (\r\n",
+            "  echo 错误: 当前目录不是 Git 仓库: %MERGEV_CWD%\r\n",
+            "  echo 请在仓库根目录或子目录中执行 mergev。\r\n",
+            "  exit /b 1\r\n",
+            ")\r\n",
+            "\"{}\" %*\r\n"
+        ),
         exe.display()
     );
     fs::write(link, script).map_err(|e| format!("写入 {} 失败: {e}", link.display()))
