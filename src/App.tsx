@@ -29,7 +29,15 @@ type ConflictDecision =
   | "ours"
   | "theirs"
   | "oursThenTheirs"
-  | "theirsThenOurs";
+  | "theirsThenOurs"
+  | "empty";
+/** 单侧裁决：pending 仍冲突；accepted 合入 Result；ignored 取消该侧冲突态且不合入 */
+type SideVerdict = "pending" | "accepted" | "ignored";
+type ConflictResolution = {
+  ours: SideVerdict;
+  theirs: SideVerdict;
+  acceptOrder: Array<"ours" | "theirs">;
+};
 type SideStatus = "modified" | "added" | "deleted";
 type MergeRowKind = "context" | "conflict" | "insert" | "delete" | "empty";
 type ResultSource =
@@ -81,7 +89,9 @@ type ConflictRegion = {
   rowStart: number;
   rowEnd: number;
   decision: ConflictDecision;
-  /** conflict=双方红；change=单方绿；均需手动 Accept */
+  /** 会话内按侧 Accept/Ignore；文档加载时可能缺失 */
+  resolution: ConflictResolution;
+  /** conflict=双方红；change=单方绿；均需手动 Accept / Ignore */
   blockKind?: "conflict" | "change";
   ours: string;
   theirs: string;
@@ -108,6 +118,7 @@ type MergeDocument = {
 
 type MergeSession = {
   document: MergeDocument;
+  resolutions: ConflictResolution[];
   decisions: ConflictDecision[];
   rows: MergeRow[];
   resultLines: ResultLine[];
@@ -117,7 +128,7 @@ type MergeSession = {
 };
 
 type MergeUndoEntry = {
-  decisions: ConflictDecision[];
+  resolutions: ConflictResolution[];
   activeConflict: number;
   dirty: boolean;
 };
@@ -174,7 +185,12 @@ function sideHasSubstantive(text: string): boolean {
   return splitLines(text).some((line) => line.trim().length > 0);
 }
 
-function isChangeBlock(conflict: ConflictRegion | null | undefined): boolean {
+function isChangeBlock(
+  conflict:
+    | Pick<ConflictRegion, "ours" | "theirs" | "blockKind">
+    | null
+    | undefined,
+): boolean {
   if (!conflict) {
     return false;
   }
@@ -186,7 +202,7 @@ function isChangeBlock(conflict: ConflictRegion | null | undefined): boolean {
   );
 }
 
-/** 单方绿块在无内容侧不着色，只留对齐空行；已合并到 Result 的一侧不再标成冲突 */
+/** 单方绿块在无内容侧不着色，只留对齐空行；已 Accept/Ignore 的一侧不再标成冲突 */
 function sideRowKind(
   side: "ours" | "theirs",
   rowKind: MergeRowKind,
@@ -202,31 +218,18 @@ function sideRowKind(
     }
   }
   if (rowKind === "insert" || rowKind === "conflict" || rowKind === "delete") {
-    if (side === "ours" && conflict && decisionIncludesOurs(conflict.decision)) {
-      return "context";
-    }
-    if (
-      side === "theirs" &&
-      conflict &&
-      decisionIncludesTheirs(conflict.decision)
-    ) {
+    if (sideIsSettled(side, conflict)) {
       return "context";
     }
   }
   return rowKind;
 }
 
-function sideHasConflictActions(
+function sideNeedsAction(
   side: "ours" | "theirs",
   conflict: ConflictRegion | null | undefined,
 ): boolean {
   if (!conflict) {
-    return false;
-  }
-  if (side === "ours" && decisionIncludesOurs(conflict.decision)) {
-    return false;
-  }
-  if (side === "theirs" && decisionIncludesTheirs(conflict.decision)) {
     return false;
   }
   if (!isChangeBlock(conflict)) {
@@ -236,16 +239,32 @@ function sideHasConflictActions(
   return sideHasSubstantive(sideText);
 }
 
-function sideDecisionMerged(
+function sideIsSettled(
   side: "ours" | "theirs",
   conflict: ConflictRegion | null | undefined,
 ): boolean {
   if (!conflict) {
     return false;
   }
-  return side === "ours"
-    ? decisionIncludesOurs(conflict.decision)
-    : decisionIncludesTheirs(conflict.decision);
+  const resolution = conflict.resolution ?? emptyResolution();
+  return resolution[side] !== "pending";
+}
+
+function sideHasConflictActions(
+  side: "ours" | "theirs",
+  conflict: ConflictRegion | null | undefined,
+): boolean {
+  if (!conflict || !sideNeedsAction(side, conflict)) {
+    return false;
+  }
+  return !sideIsSettled(side, conflict);
+}
+
+function sideDecisionMerged(
+  side: "ours" | "theirs",
+  conflict: ConflictRegion | null | undefined,
+): boolean {
+  return sideIsSettled(side, conflict);
 }
 
 function paneHighlightText(
@@ -265,6 +284,80 @@ function paneHighlightText(
     .join("\n");
 }
 
+function emptyResolution(): ConflictResolution {
+  return { ours: "pending", theirs: "pending", acceptOrder: [] };
+}
+
+function applyAccept(
+  current: ConflictResolution,
+  side: "ours" | "theirs",
+): ConflictResolution {
+  if (current[side] === "accepted") {
+    return current;
+  }
+  return {
+    ours: side === "ours" ? "accepted" : current.ours,
+    theirs: side === "theirs" ? "accepted" : current.theirs,
+    acceptOrder: [...current.acceptOrder.filter((item) => item !== side), side],
+  };
+}
+
+function applyIgnore(
+  current: ConflictResolution,
+  side: "ours" | "theirs",
+): ConflictResolution {
+  if (current[side] === "ignored") {
+    return current;
+  }
+  return {
+    ours: side === "ours" ? "ignored" : current.ours,
+    theirs: side === "theirs" ? "ignored" : current.theirs,
+    acceptOrder: current.acceptOrder.filter((item) => item !== side),
+  };
+}
+
+function decisionFromResolution(resolution: ConflictResolution): ConflictDecision {
+  const accepted = resolution.acceptOrder.filter(
+    (side) => resolution[side] === "accepted",
+  );
+  if (accepted.length === 0) {
+    if (resolution.ours !== "pending" && resolution.theirs !== "pending") {
+      return "empty";
+    }
+    return "unresolved";
+  }
+  if (accepted.length === 1) {
+    return accepted[0];
+  }
+  return accepted[0] === "ours" ? "oursThenTheirs" : "theirsThenOurs";
+}
+
+function isResolutionComplete(
+  resolution: ConflictResolution,
+  conflict: Pick<ConflictRegion, "ours" | "theirs" | "blockKind">,
+): boolean {
+  const needsOurs =
+    !isChangeBlock(conflict) || sideHasSubstantive(conflict.ours);
+  const needsTheirs =
+    !isChangeBlock(conflict) || sideHasSubstantive(conflict.theirs);
+  return (
+    (!needsOurs || resolution.ours !== "pending") &&
+    (!needsTheirs || resolution.theirs !== "pending")
+  );
+}
+
+function resolutionsEqual(
+  a: ConflictResolution,
+  b: ConflictResolution,
+): boolean {
+  return (
+    a.ours === b.ours &&
+    a.theirs === b.theirs &&
+    a.acceptOrder.length === b.acceptOrder.length &&
+    a.acceptOrder.every((side, index) => side === b.acceptOrder[index])
+  );
+}
+
 function decisionIncludesOurs(decision: ConflictDecision): boolean {
   return (
     decision === "ours" ||
@@ -279,30 +372,6 @@ function decisionIncludesTheirs(decision: ConflictDecision): boolean {
     decision === "oursThenTheirs" ||
     decision === "theirsThenOurs"
   );
-}
-
-/** 先接受一侧后再接受另一侧时，追加而不是替换。 */
-function resolveNextDecision(
-  current: ConflictDecision,
-  incoming: ConflictDecision,
-): ConflictDecision {
-  if (incoming === "unresolved") {
-    return "unresolved";
-  }
-  if (current === "unresolved") {
-    return incoming;
-  }
-  if (current === incoming) {
-    return current;
-  }
-  if (current === "ours" && incoming === "theirs") {
-    return "oursThenTheirs";
-  }
-  if (current === "theirs" && incoming === "ours") {
-    return "theirsThenOurs";
-  }
-  // 已是双方拼接时再点单侧 → 改为仅该侧
-  return incoming;
 }
 
 function decisionResultLines(
@@ -325,6 +394,8 @@ function decisionResultLines(
         source: "manual",
         lines: [...splitLines(theirs), ...splitLines(ours)],
       };
+    case "empty":
+      return { source: "manual", lines: [] };
     case "unresolved":
     default:
       // 中间只留一行细占位，连接带向 Result 收窄（避免中间块过粗）
@@ -338,7 +409,7 @@ function decisionResultLines(
 function buildSessionFromDocument(document: MergeDocument): MergeSession {
   return rebuildSession(
     document,
-    document.conflicts.map(() => "unresolved"),
+    document.conflicts.map(() => emptyResolution()),
     document.conflicts.length > 0 ? 0 : -1,
     false,
   );
@@ -346,10 +417,11 @@ function buildSessionFromDocument(document: MergeDocument): MergeSession {
 
 function rebuildSession(
   document: MergeDocument,
-  decisions: ConflictDecision[],
+  resolutions: ConflictResolution[],
   activeConflict: number,
   dirty: boolean,
 ): MergeSession {
+  const decisions = resolutions.map(decisionFromResolution);
   const rows: MergeRow[] = [];
   const resultLines: ResultLine[] = [];
   const conflicts: ConflictRegion[] = [];
@@ -406,6 +478,7 @@ function rebuildSession(
       document.conflicts.find((item) => item.index === conflictIndex) ??
       document.conflicts[conflictCursor];
     const decision = decisions[conflictIndex] ?? "unresolved";
+    const resolution = resolutions[conflictIndex] ?? emptyResolution();
     const blockKind =
       region.blockKind ??
       (sideHasSubstantive(region.ours) && sideHasSubstantive(region.theirs)
@@ -554,6 +627,7 @@ function rebuildSession(
       rowStart,
       rowEnd: rows.length - 1,
       decision,
+      resolution,
       blockKind,
       ours: oursText || region.ours,
       theirs: theirsText || region.theirs,
@@ -563,7 +637,9 @@ function rebuildSession(
     conflictCursor += 1;
   }
 
-  const unresolvedCount = decisions.filter((d) => d === "unresolved").length;
+  const unresolvedCount = conflicts.filter(
+    (conflict) => !isResolutionComplete(conflict.resolution, conflict),
+  ).length;
   const nextActive =
     activeConflict >= 0 && activeConflict < conflicts.length
       ? activeConflict
@@ -576,6 +652,7 @@ function rebuildSession(
       ...document,
       unresolvedCount,
     },
+    resolutions,
     decisions,
     rows,
     resultLines,
@@ -650,15 +727,20 @@ function wordDiffTokens(left: string, right: string): {
 }
 
 function nextUnresolvedIndex(
-  decisions: ConflictDecision[],
+  resolutions: ConflictResolution[],
+  conflicts: Array<Pick<ConflictRegion, "ours" | "theirs" | "blockKind">>,
   from: number,
 ): number {
-  if (decisions.length === 0) {
+  if (resolutions.length === 0) {
     return -1;
   }
-  for (let offset = 1; offset <= decisions.length; offset += 1) {
-    const index = (from + offset) % decisions.length;
-    if (decisions[index] === "unresolved") {
+  for (let offset = 1; offset <= resolutions.length; offset += 1) {
+    const index = (from + offset) % resolutions.length;
+    const conflict = conflicts[index];
+    if (
+      conflict &&
+      !isResolutionComplete(resolutions[index] ?? emptyResolution(), conflict)
+    ) {
       return index;
     }
   }
@@ -986,7 +1068,9 @@ function MergeScreen({
   );
   const [undoStack, setUndoStack] = useState<MergeUndoEntry[]>([]);
   const unresolved = session
-    ? session.decisions.filter((d) => d === "unresolved").length
+    ? session.conflicts.filter(
+        (conflict) => !isResolutionComplete(conflict.resolution, conflict),
+      ).length
     : 0;
   const canSave = session !== null && session.conflicts.length > 0 && unresolved === 0;
   const canUndo = undoStack.length > 0;
@@ -1015,32 +1099,61 @@ function MergeScreen({
     setUndoStack((stack) => [
       ...stack,
       {
-        decisions: [...session.decisions],
+        resolutions: session.resolutions.map((item) => ({
+          ...item,
+          acceptOrder: [...item.acceptOrder],
+        })),
         activeConflict: session.activeConflict,
         dirty: session.dirty,
       },
     ]);
   }
 
-  function setDecision(decision: ConflictDecision, conflictIndex?: number) {
+  function setDecision(
+    decision: ConflictDecision | "ignoreOurs" | "ignoreTheirs",
+    conflictIndex?: number,
+  ) {
     if (!session || session.conflicts.length === 0) {
       return;
     }
     const index = conflictIndex ?? session.activeConflict;
-    if (index < 0 || index >= session.decisions.length) {
+    if (index < 0 || index >= session.resolutions.length) {
       return;
     }
-    const next = resolveNextDecision(session.decisions[index], decision);
-    if (next === session.decisions[index]) {
+    const current = session.resolutions[index] ?? emptyResolution();
+    let next: ConflictResolution;
+    if (decision === "unresolved" || decision === "empty") {
+      next = emptyResolution();
+    } else if (decision === "ignoreOurs") {
+      next = applyIgnore(current, "ours");
+    } else if (decision === "ignoreTheirs") {
+      next = applyIgnore(current, "theirs");
+    } else if (decision === "ours") {
+      next = applyAccept(current, "ours");
+    } else if (decision === "theirs") {
+      next = applyAccept(current, "theirs");
+    } else if (decision === "oursThenTheirs") {
+      next = applyAccept(applyAccept(emptyResolution(), "ours"), "theirs");
+    } else if (decision === "theirsThenOurs") {
+      next = applyAccept(applyAccept(emptyResolution(), "theirs"), "ours");
+    } else {
+      return;
+    }
+    if (resolutionsEqual(next, current)) {
       return;
     }
     pushUndoSnapshot();
-    const decisions = [...session.decisions];
-    decisions[index] = next;
+    const resolutions = [...session.resolutions];
+    resolutions[index] = next;
+    const region =
+      session.conflicts.find((item) => item.index === index) ??
+      session.conflicts[index];
     const jumpTo =
-      next === "unresolved" ? index : nextUnresolvedIndex(decisions, index);
+      region && isResolutionComplete(next, region)
+        ? nextUnresolvedIndex(resolutions, session.conflicts, index)
+        : index;
     updateSession(
-      rebuildSession(session.document, decisions, jumpTo, true),
+      rebuildSession(session.document, resolutions, jumpTo, true),
     );
   }
 
@@ -1053,7 +1166,7 @@ function MergeScreen({
     updateSession(
       rebuildSession(
         session.document,
-        previous.decisions,
+        previous.resolutions,
         previous.activeConflict,
         previous.dirty,
       ),
@@ -1723,7 +1836,10 @@ function MergeGrid({
   activeConflict: number;
   paneHighlights: PaneHighlights;
   onSelectConflict: (index: number) => void;
-  onDecision: (decision: ConflictDecision, conflictIndex: number) => void;
+  onDecision: (
+    decision: ConflictDecision | "ignoreOurs" | "ignoreTheirs",
+    conflictIndex: number,
+  ) => void;
 }) {
   const oursPaneRef = useRef<HTMLDivElement>(null);
   const resultPaneRef = useRef<HTMLDivElement>(null);
@@ -1885,6 +2001,7 @@ function MergeGrid({
         rowStart: index,
         rowEnd: index,
         decision: "unresolved",
+        resolution: emptyResolution(),
         blockKind: row.kind === "insert" ? "change" : "conflict",
         ours: row.oursLine?.text ?? "",
         theirs: row.theirsLine?.text ?? "",
@@ -1896,7 +2013,7 @@ function MergeGrid({
   const layoutKey = `${rows.length}:${linkConflicts
     .map(
       (item) =>
-        `${item.index}:${item.decision}:${item.blockKind ?? ""}:${item.rowStart}:${item.rowEnd}`,
+        `${item.index}:${item.decision}:${item.resolution.ours}:${item.resolution.theirs}:${item.blockKind ?? ""}:${item.rowStart}:${item.rowEnd}`,
     )
     .join("|")}`;
 
@@ -1920,6 +2037,7 @@ function MergeGrid({
                   sideHasConflictActions("ours", item.conflict)
                 }
                 decision={item.conflict?.decision}
+                resolution={item.conflict?.resolution}
                 onSelectConflict={onSelectConflict}
                 onDecision={onDecision}
               />
@@ -1989,6 +2107,7 @@ function MergeGrid({
                   sideHasConflictActions("theirs", item.conflict)
                 }
                 decision={item.conflict?.decision}
+                resolution={item.conflict?.resolution}
                 onSelectConflict={onSelectConflict}
                 onDecision={onDecision}
               />
@@ -2010,6 +2129,7 @@ function MergeCell({
   renderTokens,
   showActions = false,
   decision,
+  resolution,
   onSelectConflict,
   onDecision,
 }: {
@@ -2022,8 +2142,12 @@ function MergeCell({
   renderTokens?: RenderToken[];
   showActions?: boolean;
   decision?: ConflictDecision;
+  resolution?: ConflictResolution;
   onSelectConflict: (index: number) => void;
-  onDecision?: (decision: ConflictDecision, conflictIndex: number) => void;
+  onDecision?: (
+    decision: ConflictDecision | "ignoreOurs" | "ignoreTheirs",
+    conflictIndex: number,
+  ) => void;
 }) {
   const lineText = line?.text ?? "";
   const safeRenderTokens =
@@ -2054,6 +2178,7 @@ function MergeCell({
         <InlineConflictActions
           side={side}
           decision={decision}
+          resolution={resolution ?? emptyResolution()}
           onDecision={(next) => onDecision(next, conflictIndex)}
         />
       </span>
@@ -2114,14 +2239,20 @@ function MergeCell({
 function InlineConflictActions({
   side,
   decision,
+  resolution,
   onDecision,
 }: {
   side: "ours" | "theirs";
   decision: ConflictDecision;
-  onDecision: (decision: ConflictDecision) => void;
+  resolution: ConflictResolution;
+  onDecision: (
+    decision: ConflictDecision | "ignoreOurs" | "ignoreTheirs",
+  ) => void;
 }) {
   const acceptTitle =
     side === "ours" ? "Accept Yours (1)" : "Accept Theirs (2)";
+  const ignoreTitle =
+    side === "ours" ? "Ignore Yours" : "Ignore Theirs";
 
   if (side === "ours") {
     return (
@@ -2129,12 +2260,12 @@ function InlineConflictActions({
         <button
           type="button"
           className={
-            decision === "unresolved" ? "inline-btn active" : "inline-btn"
+            resolution.ours === "ignored" ? "inline-btn active" : "inline-btn"
           }
-          title="Reset (r)"
+          title={ignoreTitle}
           onClick={(event) => {
             event.stopPropagation();
-            onDecision("unresolved");
+            onDecision("ignoreOurs");
           }}
         >
           ×
@@ -2174,12 +2305,12 @@ function InlineConflictActions({
       <button
         type="button"
         className={
-          decision === "unresolved" ? "inline-btn active" : "inline-btn"
+          resolution.theirs === "ignored" ? "inline-btn active" : "inline-btn"
         }
-        title="Reset (r)"
+        title={ignoreTitle}
         onClick={(event) => {
           event.stopPropagation();
-          onDecision("unresolved");
+          onDecision("ignoreTheirs");
         }}
       >
         ×

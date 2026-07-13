@@ -458,17 +458,18 @@ fn push_marker_conflict_segments(
     result_line_no: &mut usize,
     conflict_index: &mut usize,
 ) {
-    let ops = line_diff_ops(marker_ours, marker_theirs);
+    // 外层 LCS 忽略空行；再对双方替换岛做含空行二次对齐，避免 PORT/中间件/注释被糊成一块
+    let ops = refine_marker_change_islands(line_diff_ops(marker_ours, marker_theirs));
     let mut pending_ours = Vec::new();
     let mut pending_theirs = Vec::new();
 
     for (index, op) in ops.iter().enumerate() {
         match op {
             LineOp::Equal(line) => {
-                // WebStorm：空行后还有差异 → 并入当前块；空行后是共同上下文 → 当上下文打断
+                // 单方连续插入中的空行并入当前块；双方替换段之间的空行当上下文打断
                 if is_blank_line(line)
                     && (!pending_ours.is_empty() || !pending_theirs.is_empty())
-                    && equal_blank_has_following_diff(&ops, index)
+                    && equal_blank_should_absorb(&ops, index)
                 {
                     absorb_equal_blank(
                         &mut pending_ours,
@@ -515,16 +516,67 @@ fn push_marker_conflict_segments(
     );
 }
 
-/// 当前 Equal 空行之后、下一个非空 Equal 之前，是否还有 OursOnly/TheirsOnly。
-fn equal_blank_has_following_diff(ops: &[LineOp], blank_index: usize) -> bool {
+/// 空行后到下一个非空 Equal 之间：仅单方差异 → 吸收；双方都有改动 → 打断。
+fn equal_blank_should_absorb(ops: &[LineOp], blank_index: usize) -> bool {
+    let mut saw_ours = false;
+    let mut saw_theirs = false;
+    let mut saw_diff = false;
     for op in ops.iter().skip(blank_index + 1) {
         match op {
             LineOp::Equal(line) if is_blank_line(line) => continue,
-            LineOp::Equal(_) => return false,
-            LineOp::OursOnly(_) | LineOp::TheirsOnly(_) => return true,
+            LineOp::Equal(_) => break,
+            LineOp::OursOnly(_) => {
+                saw_ours = true;
+                saw_diff = true;
+            }
+            LineOp::TheirsOnly(_) => {
+                saw_theirs = true;
+                saw_diff = true;
+            }
         }
     }
-    false
+    saw_diff && !(saw_ours && saw_theirs)
+}
+
+/// 将「先全左后全右」的替换岛用含空行 LCS 再对齐，让相同空行成为块边界。
+fn refine_marker_change_islands(ops: Vec<LineOp>) -> Vec<LineOp> {
+    let mut refined = Vec::with_capacity(ops.len());
+    let mut index = 0usize;
+    while index < ops.len() {
+        match &ops[index] {
+            LineOp::Equal(line) => {
+                refined.push(LineOp::Equal(line.clone()));
+                index += 1;
+            }
+            LineOp::OursOnly(_) | LineOp::TheirsOnly(_) => {
+                let start = index;
+                while index < ops.len() && !matches!(ops[index], LineOp::Equal(_)) {
+                    index += 1;
+                }
+                let island = &ops[start..index];
+                let ours: Vec<String> = island
+                    .iter()
+                    .filter_map(|op| match op {
+                        LineOp::OursOnly(line) => Some(line.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                let theirs: Vec<String> = island
+                    .iter()
+                    .filter_map(|op| match op {
+                        LineOp::TheirsOnly(line) => Some(line.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                if ours.is_empty() || theirs.is_empty() {
+                    refined.extend(island.iter().cloned());
+                } else {
+                    refined.extend(line_diff_ops_including_blanks(&ours, &theirs));
+                }
+            }
+        }
+    }
+    refined
 }
 
 fn is_blank_line(line: &str) -> bool {
@@ -1077,12 +1129,29 @@ struct ChangeGroup {
 /// LCS 行级 diff：相同非空行打断冲突；空行不参与 LCS 匹配，按两侧空隙重新挂载，
 /// 避免把「Express 后空行」错误对齐到「Go 后空行」从而拆坏/吃掉上下文。
 fn line_diff_ops(ours: &[String], theirs: &[String]) -> Vec<LineOp> {
-    let ours_nb: Vec<usize> = (0..ours.len())
-        .filter(|&i| !is_blank_line(&ours[i]))
-        .collect();
-    let theirs_nb: Vec<usize> = (0..theirs.len())
-        .filter(|&j| !is_blank_line(&theirs[j]))
-        .collect();
+    line_diff_ops_impl(ours, theirs, false)
+}
+
+/// 替换岛二次对齐：空行参与 LCS，相同空行可把 PORT / 中间件 / 注释拆成独立块。
+fn line_diff_ops_including_blanks(ours: &[String], theirs: &[String]) -> Vec<LineOp> {
+    line_diff_ops_impl(ours, theirs, true)
+}
+
+fn line_diff_ops_impl(ours: &[String], theirs: &[String], match_blanks: bool) -> Vec<LineOp> {
+    let ours_nb: Vec<usize> = if match_blanks {
+        (0..ours.len()).collect()
+    } else {
+        (0..ours.len())
+            .filter(|&i| !is_blank_line(&ours[i]))
+            .collect()
+    };
+    let theirs_nb: Vec<usize> = if match_blanks {
+        (0..theirs.len()).collect()
+    } else {
+        (0..theirs.len())
+            .filter(|&j| !is_blank_line(&theirs[j]))
+            .collect()
+    };
     let n = ours_nb.len();
     let m = theirs_nb.len();
 
@@ -1126,6 +1195,18 @@ fn line_diff_ops(ours: &[String], theirs: &[String]) -> Vec<LineOp> {
     while b < m {
         nb_ops.push(NbOp::Theirs(b));
         b += 1;
+    }
+
+    // 含空行匹配时下标已覆盖全文件，无需再挂载空隙
+    if match_blanks {
+        return nb_ops
+            .into_iter()
+            .map(|op| match op {
+                NbOp::Equal(a, _) => LineOp::Equal(ours[ours_nb[a]].clone()),
+                NbOp::Ours(a) => LineOp::OursOnly(ours[ours_nb[a]].clone()),
+                NbOp::Theirs(b) => LineOp::TheirsOnly(theirs[theirs_nb[b]].clone()),
+            })
+            .collect();
     }
 
     let mut ops = Vec::new();
@@ -2086,7 +2167,8 @@ same-tail
     }
 
     #[test]
-    fn blank_line_inside_conflict_does_not_split_block() {
+    fn blank_line_between_replace_regions_splits_blocks() {
+        // 双方替换段之间的相同空行应打断，而不是糊成一块
         let content = "\
 <<<<<<< ours
 A
@@ -2102,12 +2184,21 @@ Z
 ";
         let parsed = parse_conflict_file(content).unwrap();
         let (_rows, conflicts, result) = build_marker_document(&parsed);
-        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts.len(), 2);
         assert_eq!(conflicts[0].block_kind, ConflictBlockKind::Conflict);
-        assert_eq!(conflicts[0].ours, "A\n\nB\nC");
-        assert_eq!(conflicts[0].theirs, "X\n\nY\nZ");
-        assert!(result.is_empty());
-        assert_eq!(count_conflict_blocks(content), 1);
+        assert_eq!(conflicts[0].ours, "A");
+        assert_eq!(conflicts[0].theirs, "X");
+        assert_eq!(conflicts[1].block_kind, ConflictBlockKind::Conflict);
+        assert_eq!(conflicts[1].ours, "B\nC");
+        assert_eq!(conflicts[1].theirs, "Y\nZ");
+        assert_eq!(
+            result
+                .iter()
+                .map(|line| line.text.as_str())
+                .collect::<Vec<_>>(),
+            vec![""]
+        );
+        assert_eq!(count_conflict_blocks(content), 2);
     }
 
     #[test]
@@ -2428,5 +2519,111 @@ Feature Team 2
             vec!["", "## 技术栈", "", "- Node.js", "- Express", "## 作者", ""]
         );
         assert_eq!(count_conflict_blocks(content), 4);
+    }
+
+    #[test]
+    fn webstorm_style_express_conflict_splits_replace_islands() {
+        let content = "\
+<<<<<<< HEAD
+// JavaScript 文件 - Feature Branch 1 版本
+const express = require('express');
+const app = express();
+const PORT = 3000;
+
+// 配置中间件
+app.use(express.json());
+app.use(express.static('public'));
+
+// 路由处理
+app.get('/', (req, res) => {
+  res.send('Welcome to Feature Branch 1');
+});
+
+app.get('/api/users', (req, res) => {
+  res.json({ users: ['Alice', 'Bob'] });
+});
+
+// 启动服务器
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+=======
+// JavaScript 文件 - Feature Branch 2 版本
+const express = require('express');
+const cors = require('cors');
+const app = express();
+const PORT = 8000;
+
+// 配置中间件 - 不同的顺序和选项
+app.use(cors());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true }));
+
+// 路由处理 - 完全不同的实现
+app.get('/', (req, res) => {
+  res.json({ message: 'Feature Branch 2 API' });
+});
+
+app.get('/api/users', (req, res) => {
+  res.json({
+    users: ['Charlie', 'David', 'Eve'],
+    total: 3
+  });
+});
+
+app.post('/api/render', (req, res) => {
+  res.json({ status: 'success' });
+});
+
+// 启动服务器 - 不同的消息
+app.listen(PORT, () => {
+  console.log(`Feature 2 server is running on ${PORT}`);
+>>>>>>> feature-branch-2
+});
+";
+        let parsed = parse_conflict_file(content).unwrap();
+        let (_rows, conflicts, result) = build_marker_document(&parsed);
+
+        assert_eq!(conflicts.len(), 9);
+        assert_eq!(
+            conflicts[0].ours,
+            "// JavaScript 文件 - Feature Branch 1 版本"
+        );
+        assert_eq!(
+            conflicts[0].theirs,
+            "// JavaScript 文件 - Feature Branch 2 版本"
+        );
+        assert_eq!(conflicts[1].ours, "");
+        assert_eq!(conflicts[1].theirs, "const cors = require('cors');");
+        assert_eq!(conflicts[2].ours, "const PORT = 3000;");
+        assert_eq!(conflicts[2].theirs, "const PORT = 8000;");
+        assert_eq!(
+            conflicts[3].ours,
+            "// 配置中间件\napp.use(express.json());\napp.use(express.static('public'));"
+        );
+        assert!(conflicts[3].theirs.contains("app.use(cors());"));
+        assert_eq!(conflicts[4].ours, "// 路由处理");
+        assert_eq!(conflicts[4].theirs, "// 路由处理 - 完全不同的实现");
+        assert_eq!(
+            conflicts[5].ours,
+            "  res.send('Welcome to Feature Branch 1');"
+        );
+        assert_eq!(
+            conflicts[6].ours,
+            "  res.json({ users: ['Alice', 'Bob'] });"
+        );
+        assert_eq!(conflicts[7].ours, "// 启动服务器");
+        assert!(conflicts[7].theirs.contains("app.post('/api/render'"));
+        assert_eq!(
+            conflicts[8].ours,
+            "  console.log(`Server running on port ${PORT}`);"
+        );
+        assert_eq!(
+            conflicts[8].theirs,
+            "  console.log(`Feature 2 server is running on ${PORT}`);"
+        );
+        assert!(result.iter().any(|line| line.text.contains("app.get('/'")));
+        assert!(result
+            .iter()
+            .any(|line| line.text.contains("app.listen(PORT")));
     }
 }
