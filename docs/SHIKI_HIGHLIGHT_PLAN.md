@@ -31,7 +31,7 @@
 
 采用 **Shiki + 现有自定义三栏 grid**。
 
-Shiki 只负责把每一行代码切成带颜色信息的语法 token；Mergev 继续负责：
+Shiki 只负责把每一行代码切成带颜色信息的语法 token；mergev 继续负责：
 
 - 行模型
 - 三栏布局
@@ -165,7 +165,7 @@ function getHighlighter() {
 }
 ```
 
-`INITIAL_LANGUAGES` 不要加载全部语言，第一版只放 Mergev 常见冲突文件类型：
+`INITIAL_LANGUAGES` 不要加载全部语言，第一版只放 mergev 常见冲突文件类型：
 
 ```ts
 const INITIAL_LANGUAGES = [
@@ -370,7 +370,7 @@ useEffect(() => {
 }
 ```
 
-不要把 Shiki 主题背景色直接应用到 `.line-text` 或 `.merge-cell`，否则会破坏 Mergev 当前的冲突区域底色。
+不要把 Shiki 主题背景色直接应用到 `.line-text` 或 `.merge-cell`，否则会破坏 mergev 当前的冲突区域底色。
 
 如果 Shiki token 颜色和当前背景对比度不足，优先调整主题或 token color 映射，不调整三栏结构。
 

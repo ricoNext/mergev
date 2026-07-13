@@ -35,7 +35,7 @@ pub fn install() -> Result<CliStatus, String> {
     if path_exists(&link) {
         if !is_mergev_cli(&link)? {
             return Err(format!(
-                "{} 已存在且不是 Mergev 安装的命令，请先手动处理该文件",
+                "{} 已存在且不是 mergev 安装的命令，请先手动处理该文件",
                 link.display()
             ));
         }
@@ -54,7 +54,7 @@ pub fn uninstall() -> Result<CliStatus, String> {
 
     if !is_mergev_cli(&link)? {
         return Err(format!(
-            "{} 不是 Mergev 安装的命令，已跳过删除",
+            "{} 不是 mergev 安装的命令，已跳过删除",
             link.display()
         ));
     }

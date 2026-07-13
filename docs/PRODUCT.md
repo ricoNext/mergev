@@ -1,16 +1,16 @@
-# Mergev Product Plan
+# mergev Product Plan
 
 ## One-Line Introduction
 
-Mergev is a desktop Git merge conflict resolver with a three-pane visual workflow. Developers install the app once, optionally add a global `mergev` command from the app menu, then open the conflict UI from any repository directory.
+mergev is a desktop Git merge conflict resolver with a three-pane visual workflow. Developers install the app once, optionally add a global `mergev` command from the app menu, then open the conflict UI from any repository directory.
 
 ## Chinese Introduction
 
-Mergev 是一个提供三栏可视化流程的 Git 冲突解决桌面工具。安装客户端后，可在窗口菜单中把 `mergev` 写入全局 PATH，以便在任意项目目录快速打开冲突解决界面。
+mergev 是一个提供三栏可视化流程的 Git 冲突解决桌面工具。安装客户端后，可在窗口菜单中把 `mergev` 写入全局 PATH，以便在任意项目目录快速打开冲突解决界面。
 
 ## Product Positioning
 
-Mergev focuses on one painful workflow: resolving Git conflicts. It brings the core WebStorm merge dialog experience into a focused desktop app that can be launched from the terminal:
+mergev focuses on one painful workflow: resolving Git conflicts. It brings the core WebStorm merge dialog experience into a focused desktop app that can be launched from the terminal:
 
 - Three-pane visual merge view
 - Conflict-by-conflict navigation
@@ -51,11 +51,11 @@ This format makes the developer manually answer several questions:
 - Is the result syntactically valid?
 - What command should be run next: commit, rebase continue, or cherry-pick continue?
 
-Mergev turns those questions into an interactive workflow.
+mergev turns those questions into an interactive workflow.
 
 ## Design Inspiration
 
-Mergev is inspired by WebStorm's conflict resolution workflow:
+mergev is inspired by WebStorm's conflict resolution workflow:
 
 - The developer opens a conflict file from a conflict list.
 - The tool shows the current branch, incoming branch, and final result.
@@ -71,7 +71,7 @@ The first version should complete a narrow but real workflow:
 
 ### 1. Git Repository Detection
 
-Mergev should:
+mergev should:
 
 - Detect whether the current directory is inside a Git repository
 - Find the repository root
@@ -87,7 +87,7 @@ Relevant Git states:
 
 ### 2. Conflicted File Discovery
 
-Mergev should list unmerged files from Git.
+mergev should list unmerged files from Git.
 
 For each file, show:
 
@@ -109,7 +109,7 @@ Conflicted files
 
 ### 3. Read Git Three-Way Versions
 
-Mergev should read the three staged versions from Git's index:
+mergev should read the three staged versions from Git's index:
 
 ```bash
 git show :1:path   # base
@@ -119,7 +119,7 @@ git show :3:path   # theirs
 
 This is more reliable than only parsing conflict markers from the working tree.
 
-Mergev should maintain:
+mergev should maintain:
 
 - Base content
 - Ours content
@@ -215,7 +215,7 @@ The user should always understand what will be written to disk.
 
 ### 8. Save and Mark Resolved
 
-When a file has no unresolved conflict blocks, Mergev should allow saving.
+When a file has no unresolved conflict blocks, mergev should allow saving.
 
 Save flow:
 
@@ -252,24 +252,24 @@ src/user.ts:42: Unexpected token
 
 ### 10. Git Flow Completion
 
-After all conflicts are resolved, Mergev should detect the active Git flow and suggest the next command:
+After all conflicts are resolved, mergev should detect the active Git flow and suggest the next command:
 
 - Merge: commit the merge
 - Rebase: `git rebase --continue`
 - Cherry-pick: `git cherry-pick --continue`
 - Revert: `git revert --continue`
 
-Mergev may provide a confirmable action to continue the flow in a later version.
+mergev may provide a confirmable action to continue the flow in a later version.
 
 ## Better-Than-MVP Features
 
-These features make Mergev feel polished and useful in real projects.
+These features make mergev feel polished and useful in real projects.
 
 ### 1. Non-Conflicting Change Review
 
 Git can auto-merge some changes successfully. Those changes may still be semantically risky.
 
-Mergev should show nearby non-conflicting changes and allow users to review them before saving.
+mergev should show nearby non-conflicting changes and allow users to review them before saving.
 
 Possible actions:
 
@@ -279,7 +279,7 @@ Possible actions:
 
 ### 2. Inline Diff
 
-Mergev should support both line-level and word-level diff highlighting.
+mergev should support both line-level and word-level diff highlighting.
 
 Useful examples:
 
@@ -316,7 +316,7 @@ Config support can come later.
 
 ### 5. Configuration File
 
-Mergev should eventually support a config file:
+mergev should eventually support a config file:
 
 ```json
 {
@@ -337,7 +337,7 @@ Possible config locations:
 
 Large rebases can take time. Users may quit and resume later.
 
-Mergev should persist:
+mergev should persist:
 
 - Current file
 - Current conflict index
@@ -348,7 +348,7 @@ Session state should be stored in a Git-ignored location.
 
 ### 7. Safe Undo and Backup
 
-Before writing files, Mergev should protect user work.
+Before writing files, mergev should protect user work.
 
 Possible safety features:
 
@@ -359,11 +359,11 @@ Possible safety features:
 
 ## Differentiated Features
 
-These features can make Mergev more than a terminal clone of an IDE merge editor.
+These features can make mergev more than a terminal clone of an IDE merge editor.
 
 ### 1. File-Type-Aware Conflict Handling
 
-Mergev can provide smarter views for common file types.
+mergev can provide smarter views for common file types.
 
 #### JSON
 
@@ -397,14 +397,14 @@ Mergev can provide smarter views for common file types.
 
 ### 2. Semantic Suggestions
 
-Mergev may provide rule-based suggestions before any AI feature:
+mergev may provide rule-based suggestions before any AI feature:
 
 - Both sides add imports: merge and deduplicate
 - Both sides add array items: combine if order is safe
 - JSON object changes: merge by key when keys are distinct
 - Package scripts conflict: require manual review
 
-All suggestions must be confirmable. Mergev should never silently make risky semantic decisions.
+All suggestions must be confirmable. mergev should never silently make risky semantic decisions.
 
 ### 3. Optional AI Assistance
 
@@ -426,7 +426,7 @@ Important constraints:
 
 ## CLI Design
 
-The CLI is not a separate Node package. Users install the Mergev desktop app, then use the native menu:
+The CLI is not a separate Node package. Users install the mergev desktop app, then use the native menu:
 
 - **工具 → 安装 mergev 命令到 PATH**
 - **工具 → 从 PATH 移除 mergev 命令**
@@ -436,11 +436,11 @@ Installation target:
 - macOS / Linux: `~/.local/bin/mergev`
 - Windows: `%USERPROFILE%\.local\bin\mergev.cmd`
 
-The installed entry is a small wrapper that captures the current working directory as `MERGEV_CWD` and launches the Mergev app binary. This lets developers run `mergev` inside a conflicted repository and open the UI against that project.
+The installed entry is a small wrapper that captures the current working directory as `MERGEV_CWD` and launches the mergev app binary. This lets developers run `mergev` inside a conflicted repository and open the UI against that project.
 
 ### CLI repository gate
 
-When launched via the `mergev` CLI (`MERGEV_CWD` is set), Mergev validates the working directory **before** opening the desktop UI:
+When launched via the `mergev` CLI (`MERGEV_CWD` is set), mergev validates the working directory **before** opening the desktop UI:
 
 1. Run `git rev-parse --show-toplevel` in `MERGEV_CWD`
 2. If the directory is not a Git repository (or `git` is missing), print an error to stderr and exit with code `1`
@@ -512,7 +512,7 @@ The keymap should be visible in the status bar and help screen.
 
 ## UI States
 
-Mergev should define clear states:
+mergev should define clear states:
 
 - No repository
 - Repository with no conflicts

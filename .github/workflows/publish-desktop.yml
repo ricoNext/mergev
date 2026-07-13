@@ -81,8 +81,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ steps.release.outputs.tag }}
-          releaseName: Mergev ${{ steps.release.outputs.tag }}
-          releaseBody: Desktop release for Mergev.
+          releaseName: mergev ${{ steps.release.outputs.tag }}
+          releaseBody: Desktop release for mergev.
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}

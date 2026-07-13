@@ -54,7 +54,7 @@ export function FirstLaunchDialog({ onClose }: FirstLaunchDialogProps) {
     <div className="first-launch-overlay">
       <div className="first-launch-dialog">
         <div className="first-launch-header">
-          <h1>欢迎使用 Mergev</h1>
+          <h1>欢迎使用 mergev</h1>
           <p className="first-launch-subtitle">
             一个优雅的 Git 冲突解决工具
           </p>
