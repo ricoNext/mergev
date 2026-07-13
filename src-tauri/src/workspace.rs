@@ -67,6 +67,8 @@ pub enum ConflictDecision {
     Unresolved,
     Ours,
     Theirs,
+    OursThenTheirs,
+    TheirsThenOurs,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -137,8 +139,17 @@ pub struct ConflictRegion {
     pub row_start: usize,
     pub row_end: usize,
     pub decision: ConflictDecision,
+    /// 双方都有不同改动 → conflict（红）；仅一方改动 → change（绿）
+    pub block_kind: ConflictBlockKind,
     pub ours: String,
     pub theirs: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ConflictBlockKind {
+    Conflict,
+    Change,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -329,7 +340,7 @@ pub fn load_merge_document(root: &Path, path: &str) -> Result<MergeDocument, Str
     let (ours_label, theirs_label) = side_labels(root, operation, &branch);
 
     let parsed = parse_conflict_file(&working)?;
-    let marker_conflicts = parsed_conflict_count(&parsed);
+    let marker_conflicts = parsed_marker_conflict_count(&parsed);
     let (rows, conflicts, result) = if marker_conflicts > 0 {
         build_marker_document(&parsed)
     } else if let Some(base) = base.as_deref() {
@@ -418,13 +429,15 @@ fn build_marker_document(
             Segment::Conflict { ours, theirs } => {
                 let ours_lines = split_content_lines(ours);
                 let theirs_lines = split_content_lines(theirs);
-                push_conflict_region(
+                push_marker_conflict_segments(
                     &ours_lines,
                     &theirs_lines,
                     &mut rows,
                     &mut conflicts,
+                    &mut result_lines,
                     &mut ours_line_no,
                     &mut theirs_line_no,
+                    &mut result_line_no,
                     &mut conflict_index,
                 );
             }
@@ -432,6 +445,341 @@ fn build_marker_document(
     }
 
     (rows, conflicts, result_lines)
+}
+
+fn push_marker_conflict_segments(
+    marker_ours: &[String],
+    marker_theirs: &[String],
+    rows: &mut Vec<MergeRow>,
+    conflicts: &mut Vec<ConflictRegion>,
+    result_lines: &mut Vec<ResultLine>,
+    ours_line_no: &mut usize,
+    theirs_line_no: &mut usize,
+    result_line_no: &mut usize,
+    conflict_index: &mut usize,
+) {
+    let ops = line_diff_ops(marker_ours, marker_theirs);
+    let mut pending_ours = Vec::new();
+    let mut pending_theirs = Vec::new();
+
+    for (index, op) in ops.iter().enumerate() {
+        match op {
+            LineOp::Equal(line) => {
+                // WebStorm：空行后还有差异 → 并入当前块；空行后是共同上下文 → 当上下文打断
+                if is_blank_line(line)
+                    && (!pending_ours.is_empty() || !pending_theirs.is_empty())
+                    && equal_blank_has_following_diff(&ops, index)
+                {
+                    absorb_equal_blank(
+                        &mut pending_ours,
+                        &mut pending_theirs,
+                        line.clone(),
+                    );
+                    continue;
+                }
+                flush_marker_conflict_segment(
+                    &mut pending_ours,
+                    &mut pending_theirs,
+                    rows,
+                    conflicts,
+                    result_lines,
+                    ours_line_no,
+                    theirs_line_no,
+                    result_line_no,
+                    conflict_index,
+                );
+                push_context_row(
+                    rows,
+                    result_lines,
+                    ours_line_no,
+                    theirs_line_no,
+                    result_line_no,
+                    line.clone(),
+                );
+            }
+            LineOp::OursOnly(line) => pending_ours.push(line.clone()),
+            LineOp::TheirsOnly(line) => pending_theirs.push(line.clone()),
+        }
+    }
+
+    flush_marker_conflict_segment(
+        &mut pending_ours,
+        &mut pending_theirs,
+        rows,
+        conflicts,
+        result_lines,
+        ours_line_no,
+        theirs_line_no,
+        result_line_no,
+        conflict_index,
+    );
+}
+
+/// 当前 Equal 空行之后、下一个非空 Equal 之前，是否还有 OursOnly/TheirsOnly。
+fn equal_blank_has_following_diff(ops: &[LineOp], blank_index: usize) -> bool {
+    for op in ops.iter().skip(blank_index + 1) {
+        match op {
+            LineOp::Equal(line) if is_blank_line(line) => continue,
+            LineOp::Equal(_) => return false,
+            LineOp::OursOnly(_) | LineOp::TheirsOnly(_) => return true,
+        }
+    }
+    false
+}
+
+fn is_blank_line(line: &str) -> bool {
+    line.trim().is_empty()
+}
+
+fn side_has_substantive(lines: &[String]) -> bool {
+    lines.iter().any(|line| !is_blank_line(line))
+}
+
+/// 相同空行并入当前段时两边都保留，避免一侧丢行导致错位；
+/// 红/绿仍由 side_has_substantive 判定，仅空白不会把单方块抬成双方冲突。
+fn absorb_equal_blank(
+    pending_ours: &mut Vec<String>,
+    pending_theirs: &mut Vec<String>,
+    line: String,
+) {
+    pending_ours.push(line.clone());
+    pending_theirs.push(line);
+}
+
+/// 双方都有差异 → 红色冲突块；仅一方有内容 → 绿色链接块。均需手动 Accept，不自动合入。
+/// 纯空行差异不形成冲突块（避免 C 后多出来的空行变成绿色块）。
+fn flush_marker_conflict_segment(
+    pending_ours: &mut Vec<String>,
+    pending_theirs: &mut Vec<String>,
+    rows: &mut Vec<MergeRow>,
+    conflicts: &mut Vec<ConflictRegion>,
+    result_lines: &mut Vec<ResultLine>,
+    ours_line_no: &mut usize,
+    theirs_line_no: &mut usize,
+    result_line_no: &mut usize,
+    conflict_index: &mut usize,
+) {
+    if pending_ours.is_empty() && pending_theirs.is_empty() {
+        return;
+    }
+
+    // 两侧都没有实质内容：只是空行增减，按上下文展示，不进入冲突列表
+    if !side_has_substantive(pending_ours) && !side_has_substantive(pending_theirs) {
+        push_blank_only_rows(
+            pending_ours,
+            pending_theirs,
+            rows,
+            result_lines,
+            ours_line_no,
+            theirs_line_no,
+            result_line_no,
+        );
+        pending_ours.clear();
+        pending_theirs.clear();
+        return;
+    }
+
+    // 单方绿块：把空侧前导空行剥成上下文，避免左侧 Express 下空行被吃进绿块后消失
+    peel_leading_empty_side_blanks(
+        pending_ours,
+        pending_theirs,
+        rows,
+        ours_line_no,
+        theirs_line_no,
+    );
+
+    if pending_ours.is_empty() && pending_theirs.is_empty() {
+        return;
+    }
+
+    let block_kind = if side_has_substantive(pending_ours)
+        && side_has_substantive(pending_theirs)
+    {
+        ConflictBlockKind::Conflict
+    } else {
+        ConflictBlockKind::Change
+    };
+    push_conflict_region(
+        pending_ours,
+        pending_theirs,
+        rows,
+        conflicts,
+        ours_line_no,
+        theirs_line_no,
+        conflict_index,
+        block_kind,
+    );
+
+    pending_ours.clear();
+    pending_theirs.clear();
+}
+
+/// 仅一侧有实质内容时，把另一侧开头的占位空行提成普通上下文行。
+fn peel_leading_empty_side_blanks(
+    pending_ours: &mut Vec<String>,
+    pending_theirs: &mut Vec<String>,
+    rows: &mut Vec<MergeRow>,
+    ours_line_no: &mut usize,
+    theirs_line_no: &mut usize,
+) {
+    let ours_sub = side_has_substantive(pending_ours);
+    let theirs_sub = side_has_substantive(pending_theirs);
+    if ours_sub == theirs_sub {
+        return;
+    }
+
+    if !ours_sub && theirs_sub {
+        while pending_ours
+            .first()
+            .is_some_and(|line| is_blank_line(line))
+        {
+            let line = pending_ours.remove(0);
+            // 若右侧也以空行开头，成对提成共享上下文；否则只保留左侧空行
+            if pending_theirs
+                .first()
+                .is_some_and(|line| is_blank_line(line))
+            {
+                let _ = pending_theirs.remove(0);
+                push_side_context_row(
+                    rows,
+                    ours_line_no,
+                    theirs_line_no,
+                    Some(line.clone()),
+                    Some(line),
+                );
+            } else {
+                push_side_context_row(
+                    rows,
+                    ours_line_no,
+                    theirs_line_no,
+                    Some(line),
+                    None,
+                );
+            }
+        }
+    } else if ours_sub && !theirs_sub {
+        while pending_theirs
+            .first()
+            .is_some_and(|line| is_blank_line(line))
+        {
+            let line = pending_theirs.remove(0);
+            if pending_ours
+                .first()
+                .is_some_and(|line| is_blank_line(line))
+            {
+                let _ = pending_ours.remove(0);
+                push_side_context_row(
+                    rows,
+                    ours_line_no,
+                    theirs_line_no,
+                    Some(line.clone()),
+                    Some(line),
+                );
+            } else {
+                push_side_context_row(
+                    rows,
+                    ours_line_no,
+                    theirs_line_no,
+                    None,
+                    Some(line),
+                );
+            }
+        }
+    }
+}
+
+fn push_side_context_row(
+    rows: &mut Vec<MergeRow>,
+    ours_line_no: &mut usize,
+    theirs_line_no: &mut usize,
+    ours_text: Option<String>,
+    theirs_text: Option<String>,
+) {
+    let ours_line = ours_text.map(|text| {
+        let line = PaneLine {
+            number: Some(*ours_line_no),
+            text,
+        };
+        *ours_line_no += 1;
+        line
+    });
+    let theirs_line = theirs_text.map(|text| {
+        let line = PaneLine {
+            number: Some(*theirs_line_no),
+            text,
+        };
+        *theirs_line_no += 1;
+        line
+    });
+    rows.push(MergeRow {
+        id: format!("r{}", rows.len()),
+        kind: MergeRowKind::Context,
+        conflict_index: None,
+        ours_line,
+        result_line: None,
+        theirs_line,
+    });
+}
+
+/// 纯空行差异：两边一致则写入 Result；不一致则只占位展示，不要求 Accept。
+fn push_blank_only_rows(
+    hunk_ours: &[String],
+    hunk_theirs: &[String],
+    rows: &mut Vec<MergeRow>,
+    result_lines: &mut Vec<ResultLine>,
+    ours_line_no: &mut usize,
+    theirs_line_no: &mut usize,
+    result_line_no: &mut usize,
+) {
+    if hunk_ours.is_empty() && hunk_theirs.is_empty() {
+        return;
+    }
+
+    let both_agree = hunk_ours == hunk_theirs;
+    let row_count = hunk_ours.len().max(hunk_theirs.len()).max(1);
+    for offset in 0..row_count {
+        let ours_line = hunk_ours.get(offset).map(|text| {
+            let line = PaneLine {
+                number: Some(*ours_line_no),
+                text: text.clone(),
+            };
+            *ours_line_no += 1;
+            line
+        });
+        let theirs_line = hunk_theirs.get(offset).map(|text| {
+            let line = PaneLine {
+                number: Some(*theirs_line_no),
+                text: text.clone(),
+            };
+            *theirs_line_no += 1;
+            line
+        });
+        let result_line = if both_agree {
+            hunk_ours.get(offset).map(|text| {
+                let line = PaneLine {
+                    number: Some(*result_line_no),
+                    text: text.clone(),
+                };
+                result_lines.push(ResultLine {
+                    source: ResultSource::Context,
+                    conflict_index: None,
+                    text: text.clone(),
+                });
+                *result_line_no += 1;
+                line
+            })
+        } else {
+            None
+        };
+        rows.push(MergeRow {
+            id: format!("r{}", rows.len()),
+            kind: MergeRowKind::Context,
+            conflict_index: None,
+            ours_line,
+            result_line,
+            theirs_line,
+        });
+    }
 }
 
 fn build_three_way_document(
@@ -506,41 +854,41 @@ fn build_three_way_document(
         let ours_chunk = &ours_lines[ours_start..ours_end];
         let theirs_chunk = &theirs_lines[theirs_start..theirs_end];
 
-        if ours_changed && theirs_changed && ours_chunk != theirs_chunk {
-            let mut ours_line_no = ours_start + 1;
-            let mut theirs_line_no = theirs_start + 1;
-            push_conflict_region(
-                ours_chunk,
-                theirs_chunk,
-                &mut rows,
-                &mut conflicts,
-                &mut ours_line_no,
-                &mut theirs_line_no,
-                &mut conflict_index,
-            );
-        } else {
-            let (result_chunk, source) = if ours_changed {
-                (ours_chunk, ResultSource::Ours)
-            } else if theirs_changed {
-                (theirs_chunk, ResultSource::Theirs)
+        // 任何相对 base 的改动都进入可操作块，不自动合入 Result；
+        // 纯空行差异除外，避免多出来的空行变成绿色冲突块。
+        if ours_changed || theirs_changed {
+            if !side_has_substantive(ours_chunk) && !side_has_substantive(theirs_chunk) {
+                let mut ours_line_no = ours_start + 1;
+                let mut theirs_line_no = theirs_start + 1;
+                push_blank_only_rows(
+                    ours_chunk,
+                    theirs_chunk,
+                    &mut rows,
+                    &mut result_lines,
+                    &mut ours_line_no,
+                    &mut theirs_line_no,
+                    &mut result_line_no,
+                );
             } else {
-                (
-                    &base_lines[group.base_start..group.base_end],
-                    ResultSource::Context,
-                )
-            };
-            push_auto_change_rows(
-                &mut rows,
-                &mut result_lines,
-                &mut result_line_no,
-                &ours_lines[ours_start..ours_end],
-                ours_start,
-                result_chunk,
-                source,
-                &theirs_lines[theirs_start..theirs_end],
-                theirs_start,
-                group.base_end == group.base_start,
-            );
+                let block_kind = if ours_changed && theirs_changed && ours_chunk != theirs_chunk
+                {
+                    ConflictBlockKind::Conflict
+                } else {
+                    ConflictBlockKind::Change
+                };
+                let mut ours_line_no = ours_start + 1;
+                let mut theirs_line_no = theirs_start + 1;
+                push_conflict_region(
+                    ours_chunk,
+                    theirs_chunk,
+                    &mut rows,
+                    &mut conflicts,
+                    &mut ours_line_no,
+                    &mut theirs_line_no,
+                    &mut conflict_index,
+                    block_kind,
+                );
+            }
         }
 
         base_pos = group.base_end;
@@ -575,12 +923,18 @@ fn push_conflict_region(
     ours_line_no: &mut usize,
     theirs_line_no: &mut usize,
     conflict_index: &mut usize,
+    block_kind: ConflictBlockKind,
 ) {
     if hunk_ours.is_empty() && hunk_theirs.is_empty() {
         return;
     }
     let row_start = rows.len();
     let row_count = hunk_ours.len().max(hunk_theirs.len()).max(1);
+    // 绿色链接块用 Insert，红色冲突块用 Conflict
+    let row_kind = match block_kind {
+        ConflictBlockKind::Change => MergeRowKind::Insert,
+        ConflictBlockKind::Conflict => MergeRowKind::Conflict,
+    };
     for offset in 0..row_count {
         let ours_line = hunk_ours.get(offset).map(|text| {
             let line = PaneLine {
@@ -601,7 +955,7 @@ fn push_conflict_region(
         let kind = if ours_line.is_none() && theirs_line.is_none() {
             MergeRowKind::Empty
         } else {
-            MergeRowKind::Conflict
+            row_kind
         };
         rows.push(MergeRow {
             id: format!("r{}", rows.len()),
@@ -617,6 +971,7 @@ fn push_conflict_region(
         row_start,
         row_end: rows.len().saturating_sub(1),
         decision: ConflictDecision::Unresolved,
+        block_kind,
         ours: join_content_lines(hunk_ours),
         theirs: join_content_lines(hunk_theirs),
     });
@@ -657,52 +1012,6 @@ fn push_context_row(
     *ours_line_no += 1;
     *theirs_line_no += 1;
     *result_line_no += 1;
-}
-
-fn push_auto_change_rows(
-    rows: &mut Vec<MergeRow>,
-    result_lines: &mut Vec<ResultLine>,
-    result_line_no: &mut usize,
-    ours_chunk: &[String],
-    ours_start: usize,
-    result_chunk: &[String],
-    source: ResultSource,
-    theirs_chunk: &[String],
-    theirs_start: usize,
-    is_insertion: bool,
-) {
-    let row_count = ours_chunk
-        .len()
-        .max(result_chunk.len())
-        .max(theirs_chunk.len())
-        .max(1);
-    for offset in 0..row_count {
-        let result_line = result_chunk.get(offset).map(|text| {
-            let line = (*result_line_no, text.clone());
-            *result_line_no += 1;
-            line
-        });
-        let kind = if result_chunk.is_empty() {
-            MergeRowKind::Delete
-        } else if is_insertion || ours_chunk.is_empty() || theirs_chunk.is_empty() {
-            MergeRowKind::Insert
-        } else {
-            MergeRowKind::Context
-        };
-        push_auto_row(
-            rows,
-            result_lines,
-            kind,
-            ours_chunk
-                .get(offset)
-                .map(|text| (ours_start + offset + 1, text.clone())),
-            result_line,
-            theirs_chunk
-                .get(offset)
-                .map(|text| (theirs_start + offset + 1, text.clone())),
-            source,
-        );
-    }
 }
 
 fn push_auto_row(
@@ -765,46 +1074,194 @@ struct ChangeGroup {
     theirs_span: Option<(usize, usize)>,
 }
 
-/// LCS 行级 diff：相同行打断冲突，连续差异合并为一个冲突块（类 WebStorm）。
+/// LCS 行级 diff：相同非空行打断冲突；空行不参与 LCS 匹配，按两侧空隙重新挂载，
+/// 避免把「Express 后空行」错误对齐到「Go 后空行」从而拆坏/吃掉上下文。
 fn line_diff_ops(ours: &[String], theirs: &[String]) -> Vec<LineOp> {
-    let n = ours.len();
-    let m = theirs.len();
+    let ours_nb: Vec<usize> = (0..ours.len())
+        .filter(|&i| !is_blank_line(&ours[i]))
+        .collect();
+    let theirs_nb: Vec<usize> = (0..theirs.len())
+        .filter(|&j| !is_blank_line(&theirs[j]))
+        .collect();
+    let n = ours_nb.len();
+    let m = theirs_nb.len();
+
     let mut dp = vec![vec![0usize; m + 1]; n + 1];
-    for i in (0..n).rev() {
-        for j in (0..m).rev() {
-            if ours[i] == theirs[j] {
-                dp[i][j] = dp[i + 1][j + 1] + 1;
+    for a in (0..n).rev() {
+        for b in (0..m).rev() {
+            if ours[ours_nb[a]] == theirs[theirs_nb[b]] {
+                dp[a][b] = dp[a + 1][b + 1] + 1;
             } else {
-                dp[i][j] = dp[i + 1][j].max(dp[i][j + 1]);
+                dp[a][b] = dp[a + 1][b].max(dp[a][b + 1]);
             }
         }
     }
 
-    let mut ops = Vec::new();
-    let mut i = 0usize;
-    let mut j = 0usize;
-    while i < n && j < m {
-        if ours[i] == theirs[j] && dp[i][j] == dp[i + 1][j + 1] + 1 {
-            ops.push(LineOp::Equal(ours[i].clone()));
-            i += 1;
-            j += 1;
-        } else if dp[i + 1][j] >= dp[i][j + 1] {
-            ops.push(LineOp::OursOnly(ours[i].clone()));
-            i += 1;
+    enum NbOp {
+        Equal(usize, usize),
+        Ours(usize),
+        Theirs(usize),
+    }
+
+    let mut nb_ops = Vec::new();
+    let mut a = 0usize;
+    let mut b = 0usize;
+    while a < n && b < m {
+        if ours[ours_nb[a]] == theirs[theirs_nb[b]] && dp[a][b] == dp[a + 1][b + 1] + 1 {
+            nb_ops.push(NbOp::Equal(a, b));
+            a += 1;
+            b += 1;
+        } else if dp[a + 1][b] >= dp[a][b + 1] {
+            nb_ops.push(NbOp::Ours(a));
+            a += 1;
         } else {
-            ops.push(LineOp::TheirsOnly(theirs[j].clone()));
-            j += 1;
+            nb_ops.push(NbOp::Theirs(b));
+            b += 1;
         }
     }
-    while i < n {
-        ops.push(LineOp::OursOnly(ours[i].clone()));
-        i += 1;
+    while a < n {
+        nb_ops.push(NbOp::Ours(a));
+        a += 1;
     }
-    while j < m {
-        ops.push(LineOp::TheirsOnly(theirs[j].clone()));
-        j += 1;
+    while b < m {
+        nb_ops.push(NbOp::Theirs(b));
+        b += 1;
     }
+
+    let mut ops = Vec::new();
+    let mut oi = 0usize;
+    let mut tj = 0usize;
+    let mut next_ours_nb = 0usize;
+    let mut next_theirs_nb = 0usize;
+    for nb in nb_ops {
+        match nb {
+            NbOp::Equal(a, b) => {
+                let o_target = ours_nb[a];
+                let t_target = theirs_nb[b];
+                drain_blank_gap(
+                    ours,
+                    theirs,
+                    &mut oi,
+                    o_target,
+                    &mut tj,
+                    t_target,
+                    &mut ops,
+                );
+                ops.push(LineOp::Equal(ours[o_target].clone()));
+                oi = o_target + 1;
+                tj = t_target + 1;
+                next_ours_nb = a + 1;
+                next_theirs_nb = b + 1;
+            }
+            NbOp::Ours(a) => {
+                let o_target = ours_nb[a];
+                let t_limit = if next_theirs_nb < theirs_nb.len() {
+                    theirs_nb[next_theirs_nb]
+                } else {
+                    theirs.len()
+                };
+                // 两侧空隙里成对的空行先当 Equal，避免把「技术栈后空行」吃进 React 冲突
+                drain_shared_blanks(
+                    ours,
+                    theirs,
+                    &mut oi,
+                    o_target,
+                    &mut tj,
+                    t_limit,
+                    &mut ops,
+                );
+                while oi < o_target {
+                    ops.push(LineOp::OursOnly(ours[oi].clone()));
+                    oi += 1;
+                }
+                ops.push(LineOp::OursOnly(ours[o_target].clone()));
+                oi = o_target + 1;
+                next_ours_nb = a + 1;
+            }
+            NbOp::Theirs(b) => {
+                let t_target = theirs_nb[b];
+                let o_limit = if next_ours_nb < ours_nb.len() {
+                    ours_nb[next_ours_nb]
+                } else {
+                    ours.len()
+                };
+                drain_shared_blanks(
+                    ours,
+                    theirs,
+                    &mut oi,
+                    o_limit,
+                    &mut tj,
+                    t_target,
+                    &mut ops,
+                );
+                while tj < t_target {
+                    ops.push(LineOp::TheirsOnly(theirs[tj].clone()));
+                    tj += 1;
+                }
+                ops.push(LineOp::TheirsOnly(theirs[t_target].clone()));
+                tj = t_target + 1;
+                next_theirs_nb = b + 1;
+            }
+        }
+    }
+    drain_blank_gap(
+        ours,
+        theirs,
+        &mut oi,
+        ours.len(),
+        &mut tj,
+        theirs.len(),
+        &mut ops,
+    );
     ops
+}
+
+fn drain_shared_blanks(
+    ours: &[String],
+    theirs: &[String],
+    oi: &mut usize,
+    o_end: usize,
+    tj: &mut usize,
+    t_end: usize,
+    ops: &mut Vec<LineOp>,
+) {
+    while *oi < o_end
+        && *tj < t_end
+        && is_blank_line(&ours[*oi])
+        && is_blank_line(&theirs[*tj])
+    {
+        ops.push(LineOp::Equal(ours[*oi].clone()));
+        *oi += 1;
+        *tj += 1;
+    }
+}
+
+fn drain_blank_gap(
+    ours: &[String],
+    theirs: &[String],
+    oi: &mut usize,
+    o_end: usize,
+    tj: &mut usize,
+    t_end: usize,
+    ops: &mut Vec<LineOp>,
+) {
+    while *oi < o_end || *tj < t_end {
+        let o_blank = *oi < o_end;
+        let t_blank = *tj < t_end;
+        if o_blank && t_blank {
+            ops.push(LineOp::Equal(ours[*oi].clone()));
+            *oi += 1;
+            *tj += 1;
+        } else if o_blank {
+            ops.push(LineOp::OursOnly(ours[*oi].clone()));
+            *oi += 1;
+        } else if t_blank {
+            ops.push(LineOp::TheirsOnly(theirs[*tj].clone()));
+            *tj += 1;
+        } else {
+            break;
+        }
+    }
 }
 
 fn diff_change_hunks(base: &[String], side: &[String]) -> Vec<DiffChangeHunk> {
@@ -943,6 +1400,16 @@ fn join_content_lines(lines: &[String]) -> String {
     lines.join("\n")
 }
 
+fn join_decision_sides(first: &str, second: &str) -> String {
+    if first.is_empty() {
+        second.to_string()
+    } else if second.is_empty() {
+        first.to_string()
+    } else {
+        format!("{first}\n{second}")
+    }
+}
+
 fn count_conflict_blocks(content: &str) -> usize {
     match parse_conflict_file(content) {
         Ok(parsed) => {
@@ -954,6 +1421,11 @@ fn count_conflict_blocks(content: &str) -> usize {
 }
 
 fn parsed_conflict_count(parsed: &ParsedFile) -> usize {
+    let (_, conflicts, _) = build_marker_document(parsed);
+    conflicts.len()
+}
+
+fn parsed_marker_conflict_count(parsed: &ParsedFile) -> usize {
     parsed
         .segments
         .iter()
@@ -963,9 +1435,9 @@ fn parsed_conflict_count(parsed: &ParsedFile) -> usize {
 
 fn count_merge_conflicts(root: &Path, path: &str, working: &str) -> usize {
     if let Ok(parsed) = parse_conflict_file(working) {
-        let marker_conflicts = parsed_conflict_count(&parsed);
+        let marker_conflicts = parsed_marker_conflict_count(&parsed);
         if marker_conflicts > 0 {
-            return marker_conflicts;
+            return parsed_conflict_count(&parsed);
         }
     }
 
@@ -1062,15 +1534,19 @@ fn build_headline(operation: GitOperation, ours: &str, theirs: &str) -> String {
     }
 }
 
-fn detect_operation(root: &Path) -> GitOperation {
+fn resolve_git_dir(root: &Path) -> PathBuf {
     let git_dir = PathBuf::from(
         git_stdout(root, &["rev-parse", "--git-dir"]).unwrap_or_else(|_| ".git".into()),
     );
-    let git_dir = if git_dir.is_absolute() {
+    if git_dir.is_absolute() {
         git_dir
     } else {
         root.join(git_dir)
-    };
+    }
+}
+
+fn detect_operation(root: &Path) -> GitOperation {
+    let git_dir = resolve_git_dir(root);
 
     if git_dir.join("MERGE_HEAD").exists() {
         return GitOperation::Merge;
@@ -1087,19 +1563,192 @@ fn detect_operation(root: &Path) -> GitOperation {
     GitOperation::None
 }
 
+fn is_opaque_ref_label(label: &str) -> bool {
+    matches!(
+        label,
+        "HEAD"
+            | "MERGE_HEAD"
+            | "CHERRY_PICK_HEAD"
+            | "REVERT_HEAD"
+            | "FETCH_HEAD"
+            | "ORIG_HEAD"
+            | "onto"
+            | "rebasing"
+            | "incoming"
+            | "theirs"
+            | "undefined"
+    )
+}
+
+fn clean_name_rev(name: &str) -> String {
+    let mut cleaned = name.trim().to_string();
+    if let Some(stripped) = cleaned.strip_prefix("remotes/") {
+        cleaned = stripped.to_string();
+    }
+    if let Some(idx) = cleaned.find(['~', '^', ':']) {
+        cleaned.truncate(idx);
+    }
+    cleaned
+}
+
+fn parse_merge_msg_subject(line: &str) -> Option<String> {
+    let line = line.trim();
+    for prefix in ["Merge remote-tracking branch '", "Merge branch '"] {
+        if let Some(rest) = line.strip_prefix(prefix) {
+            if let Some(end) = rest.find('\'') {
+                let name = rest[..end].trim();
+                if !name.is_empty() {
+                    return Some(name.to_string());
+                }
+            }
+        }
+    }
+    if let Some(rest) = line.strip_prefix("Merge pull request ") {
+        if let Some(from) = rest.find(" from ") {
+            let name = rest[from + 6..].trim().split_whitespace().next().unwrap_or("");
+            if !name.is_empty() {
+                return Some(name.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn branch_from_merge_msg(root: &Path) -> Option<String> {
+    let msg = std::fs::read_to_string(resolve_git_dir(root).join("MERGE_MSG")).ok()?;
+    let first = msg.lines().next()?;
+    parse_merge_msg_subject(first)
+}
+
+fn refs_pointing_at(root: &Path, rev: &str) -> Option<String> {
+    let output = git_stdout(
+        root,
+        &[
+            "for-each-ref",
+            "--format=%(refname:short)",
+            &format!("--points-at={rev}"),
+            "refs/heads",
+            "refs/remotes",
+        ],
+    )
+    .ok()?;
+
+    let mut remote = None;
+    for line in output.lines() {
+        let name = clean_name_rev(line);
+        if name.is_empty() || is_opaque_ref_label(&name) {
+            continue;
+        }
+        // 优先本地分支名
+        if !name.contains('/') {
+            return Some(name);
+        }
+        if remote.is_none() {
+            remote = Some(name);
+        }
+    }
+    remote
+}
+
+fn name_rev_label(root: &Path, rev: &str) -> Option<String> {
+    let raw = git_stdout(
+        root,
+        &[
+            "name-rev",
+            "--name-only",
+            "--no-undefined",
+            "--exclude=tags/*",
+            rev,
+        ],
+    )
+    .ok()?;
+    let cleaned = clean_name_rev(&raw);
+    if cleaned.is_empty() || is_opaque_ref_label(&cleaned) {
+        None
+    } else {
+        Some(cleaned)
+    }
+}
+
+fn short_commit(root: &Path, rev: &str) -> Option<String> {
+    git_stdout(root, &["rev-parse", "--short", rev])
+        .ok()
+        .map(|sha| sha.trim().to_string())
+        .filter(|sha| !sha.is_empty())
+}
+
+fn read_git_dir_text(root: &Path, relative: &str) -> Option<String> {
+    std::fs::read_to_string(resolve_git_dir(root).join(relative))
+        .ok()
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.is_empty())
+}
+
+fn shorten_ref_name(name: &str) -> String {
+    name.trim()
+        .trim_start_matches("refs/heads/")
+        .trim_start_matches("refs/remotes/")
+        .to_string()
+}
+
+fn resolve_merge_theirs_label(root: &Path) -> String {
+    if let Some(name) = branch_from_merge_msg(root) {
+        return name;
+    }
+    if let Some(name) = refs_pointing_at(root, "MERGE_HEAD") {
+        return name;
+    }
+    if let Some(name) = name_rev_label(root, "MERGE_HEAD") {
+        return name;
+    }
+    short_commit(root, "MERGE_HEAD").unwrap_or_else(|| "incoming".into())
+}
+
+fn resolve_rebase_onto_label(root: &Path) -> Option<String> {
+    if let Some(name) = read_git_dir_text(root, "rebase-merge/onto") {
+        if let Some(label) = name_rev_label(root, &name).or_else(|| refs_pointing_at(root, &name))
+        {
+            return Some(label);
+        }
+        return short_commit(root, &name).or(Some(name));
+    }
+    if let Some(name) = read_git_dir_text(root, "rebase-apply/onto") {
+        if let Some(label) = name_rev_label(root, &name).or_else(|| refs_pointing_at(root, &name))
+        {
+            return Some(label);
+        }
+        return short_commit(root, &name).or(Some(name));
+    }
+    None
+}
+
+fn resolve_rebase_head_label(root: &Path) -> Option<String> {
+    read_git_dir_text(root, "rebase-merge/head-name")
+        .or_else(|| read_git_dir_text(root, "rebase-apply/head-name"))
+        .map(|name| shorten_ref_name(&name))
+        .filter(|name| !name.is_empty() && !is_opaque_ref_label(name))
+}
+
 fn side_labels(root: &Path, operation: GitOperation, branch: &str) -> (String, String) {
     let ours = match operation {
-        GitOperation::Rebase => "onto".to_string(),
+        GitOperation::Rebase => resolve_rebase_onto_label(root)
+            .unwrap_or_else(|| "onto".to_string()),
+        _ if is_opaque_ref_label(branch) => name_rev_label(root, "HEAD")
+            .or_else(|| short_commit(root, "HEAD"))
+            .unwrap_or_else(|| branch.to_string()),
         _ => branch.to_string(),
     };
 
     let theirs = match operation {
-        GitOperation::Merge => git_stdout(root, &["rev-parse", "--abbrev-ref", "MERGE_HEAD"])
-            .or_else(|_| git_stdout(root, &["log", "-1", "--pretty=%s", "MERGE_HEAD"]))
-            .unwrap_or_else(|_| "incoming".into()),
-        GitOperation::Rebase => "rebasing".to_string(),
-        GitOperation::CherryPick => "cherry-pick".to_string(),
-        GitOperation::Revert => "revert".to_string(),
+        GitOperation::Merge => resolve_merge_theirs_label(root),
+        GitOperation::Rebase => resolve_rebase_head_label(root)
+            .unwrap_or_else(|| "rebasing".to_string()),
+        GitOperation::CherryPick => name_rev_label(root, "CHERRY_PICK_HEAD")
+            .or_else(|| short_commit(root, "CHERRY_PICK_HEAD"))
+            .unwrap_or_else(|| "cherry-pick".into()),
+        GitOperation::Revert => name_rev_label(root, "REVERT_HEAD")
+            .or_else(|| short_commit(root, "REVERT_HEAD"))
+            .unwrap_or_else(|| "revert".into()),
         GitOperation::None => "theirs".to_string(),
     };
 
@@ -1227,6 +1876,8 @@ fn render_result(parsed: &ParsedFile, blocks: &[ConflictBlock]) -> String {
                 let chunk = match decision {
                     ConflictDecision::Ours => ours.clone(),
                     ConflictDecision::Theirs => theirs.clone(),
+                    ConflictDecision::OursThenTheirs => join_decision_sides(ours, theirs),
+                    ConflictDecision::TheirsThenOurs => join_decision_sides(theirs, ours),
                     ConflictDecision::Unresolved => {
                         format!("<<<<<<< ours\n{ours}\n=======\n{theirs}\n>>>>>>> theirs")
                     }
@@ -1354,7 +2005,7 @@ mod tests {
     }
 
     #[test]
-    fn keeps_marker_conflict_as_one_unresolved_region() {
+    fn splits_marker_conflict_on_equal_lines() {
         let content = "\
 <<<<<<< ours
 L1
@@ -1368,9 +2019,9 @@ L8
 =======
 X1
 X2
-L3
-L4
-L5
+X3
+X4
+X5
 L6
 Y7
 L8
@@ -1378,11 +2029,189 @@ L8
 ";
         let parsed = parse_conflict_file(content).unwrap();
         let (rows, conflicts, result) = build_marker_document(&parsed);
+        assert_eq!(conflicts.len(), 2);
+        assert_eq!(conflicts[0].block_kind, ConflictBlockKind::Conflict);
+        assert_eq!(conflicts[0].ours, "L1\nL2\nL3\nL4\nL5");
+        assert_eq!(conflicts[0].theirs, "X1\nX2\nX3\nX4\nX5");
+        assert_eq!(conflicts[1].block_kind, ConflictBlockKind::Conflict);
+        assert_eq!(conflicts[1].ours, "L7");
+        assert_eq!(conflicts[1].theirs, "Y7");
+        assert_eq!(rows[0].conflict_index, Some(0));
+        assert_eq!(rows[4].conflict_index, Some(0));
+        assert_eq!(rows[5].conflict_index, None);
+        assert_eq!(rows[5].kind, MergeRowKind::Context);
+        assert_eq!(rows[6].conflict_index, Some(1));
+        assert_eq!(rows[7].conflict_index, None);
+        assert_eq!(rows[7].kind, MergeRowKind::Context);
+        assert_eq!(
+            result
+                .iter()
+                .map(|line| line.text.as_str())
+                .collect::<Vec<_>>(),
+            vec!["L6", "L8"]
+        );
+        assert_eq!(count_conflict_blocks(content), 2);
+    }
+
+    #[test]
+    fn marker_one_sided_segment_is_green_change_requiring_accept() {
+        let content = "\
+<<<<<<< ours
+same
+only-ours
+same-tail
+=======
+same
+same-tail
+>>>>>>> theirs
+";
+        let parsed = parse_conflict_file(content).unwrap();
+        let (rows, conflicts, result) = build_marker_document(&parsed);
         assert_eq!(conflicts.len(), 1);
-        assert_eq!(conflicts[0].ours, "L1\nL2\nL3\nL4\nL5\nL6\nL7\nL8");
-        assert_eq!(conflicts[0].theirs, "X1\nX2\nL3\nL4\nL5\nL6\nY7\nL8");
-        assert!(rows.iter().all(|row| row.kind == MergeRowKind::Conflict));
+        assert_eq!(conflicts[0].block_kind, ConflictBlockKind::Change);
+        assert_eq!(conflicts[0].ours, "only-ours");
+        assert_eq!(conflicts[0].theirs, "");
+        assert!(rows.iter().any(|row| {
+            row.conflict_index == Some(0) && row.kind == MergeRowKind::Insert
+        }));
+        // 未 Accept 前 Result 只有相同上下文，不自动合入
+        assert_eq!(
+            result
+                .iter()
+                .map(|line| line.text.as_str())
+                .collect::<Vec<_>>(),
+            vec!["same", "same-tail"]
+        );
+        assert_eq!(count_conflict_blocks(content), 1);
+    }
+
+    #[test]
+    fn blank_line_inside_conflict_does_not_split_block() {
+        let content = "\
+<<<<<<< ours
+A
+
+B
+C
+=======
+X
+
+Y
+Z
+>>>>>>> theirs
+";
+        let parsed = parse_conflict_file(content).unwrap();
+        let (_rows, conflicts, result) = build_marker_document(&parsed);
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].block_kind, ConflictBlockKind::Conflict);
+        assert_eq!(conflicts[0].ours, "A\n\nB\nC");
+        assert_eq!(conflicts[0].theirs, "X\n\nY\nZ");
         assert!(result.is_empty());
+        assert_eq!(count_conflict_blocks(content), 1);
+    }
+
+    #[test]
+    fn one_sided_with_blank_stays_green_change() {
+        let content = "\
+<<<<<<< ours
+A
+
+B
+=======
+
+>>>>>>> theirs
+";
+        let parsed = parse_conflict_file(content).unwrap();
+        let (_rows, conflicts, _result) = build_marker_document(&parsed);
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].block_kind, ConflictBlockKind::Change);
+        assert!(side_has_substantive(split_content_lines(&conflicts[0].ours).as_slice()));
+        assert!(!side_has_substantive(
+            split_content_lines(&conflicts[0].theirs).as_slice()
+        ));
+    }
+
+    #[test]
+    fn one_sided_prefix_with_shared_blank_is_single_change() {
+        // 左侧多出 A，其余（含 C 后空行）两边相同 → 只有 A 一个块
+        let content = "\
+<<<<<<< ours
+A
+B
+C
+
+D
+=======
+B
+C
+
+D
+>>>>>>> theirs
+";
+        let parsed = parse_conflict_file(content).unwrap();
+        let (_rows, conflicts, result) = build_marker_document(&parsed);
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].block_kind, ConflictBlockKind::Change);
+        assert_eq!(conflicts[0].ours, "A");
+        assert_eq!(conflicts[0].theirs, "");
+        assert_eq!(
+            result
+                .iter()
+                .map(|line| line.text.as_str())
+                .collect::<Vec<_>>(),
+            vec!["B", "C", "", "D"]
+        );
+    }
+
+    #[test]
+    fn blank_only_mismatch_after_shared_lines_is_not_a_block() {
+        // 仅一侧多空行时，不应再出现绿色空行冲突块
+        let content = "\
+<<<<<<< ours
+A
+B
+C
+
+D
+=======
+B
+C
+D
+>>>>>>> theirs
+";
+        let parsed = parse_conflict_file(content).unwrap();
+        let (_rows, conflicts, result) = build_marker_document(&parsed);
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].block_kind, ConflictBlockKind::Change);
+        assert_eq!(conflicts[0].ours, "A");
+        assert_eq!(conflicts[0].theirs, "");
+        assert_eq!(
+            result
+                .iter()
+                .map(|line| line.text.as_str())
+                .collect::<Vec<_>>(),
+            vec!["B", "C", "D"]
+        );
+    }
+
+    #[test]
+    fn three_way_blank_only_insert_is_not_a_block() {
+        let base = "B\nC\nD\n";
+        let ours = "A\nB\nC\n\nD\n";
+        let theirs = "B\nC\n\nD\n";
+        let (_rows, conflicts, result) = build_three_way_document(base, ours, theirs);
+
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].block_kind, ConflictBlockKind::Change);
+        assert_eq!(conflicts[0].ours, "A");
+        assert_eq!(conflicts[0].theirs, "");
+        assert_eq!(
+            result
+                .iter()
+                .map(|line| line.text.as_str())
+                .collect::<Vec<_>>(),
+            vec!["B", "C", "", "D"]
+        );
     }
 
     #[test]
@@ -1405,21 +2234,26 @@ L8
     }
 
     #[test]
-    fn three_way_applies_non_overlapping_changes() {
+    fn three_way_non_overlapping_changes_require_accept() {
         let base = "a\nb\nc\n";
         let ours = "a\nB\nc\n";
         let theirs = "a\nb\nC\n";
         let (rows, conflicts, result) = build_three_way_document(base, ours, theirs);
 
-        assert!(conflicts.is_empty());
+        assert_eq!(conflicts.len(), 2);
+        assert_eq!(conflicts[0].block_kind, ConflictBlockKind::Change);
+        assert_eq!(conflicts[1].block_kind, ConflictBlockKind::Change);
         assert_eq!(
             result
                 .iter()
                 .map(|line| line.text.as_str())
                 .collect::<Vec<_>>(),
-            vec!["a", "B", "C"]
+            vec!["a"]
         );
-        assert!(rows.iter().all(|row| row.conflict_index.is_none()));
+        assert!(rows
+            .iter()
+            .filter(|row| row.conflict_index.is_some())
+            .all(|row| row.kind == MergeRowKind::Insert));
     }
 
     #[test]
@@ -1430,6 +2264,7 @@ L8
         let (_rows, conflicts, result) = build_three_way_document(base, ours, theirs);
 
         assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].block_kind, ConflictBlockKind::Conflict);
         assert_eq!(conflicts[0].ours, "ours");
         assert_eq!(conflicts[0].theirs, "theirs");
         assert_eq!(
@@ -1442,19 +2277,22 @@ L8
     }
 
     #[test]
-    fn three_way_auto_applies_identical_changes() {
+    fn three_way_identical_changes_still_require_accept() {
         let base = "a\nb\n";
         let ours = "a\nB\n";
         let theirs = "a\nB\n";
         let (_rows, conflicts, result) = build_three_way_document(base, ours, theirs);
 
-        assert!(conflicts.is_empty());
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].block_kind, ConflictBlockKind::Change);
+        assert_eq!(conflicts[0].ours, "B");
+        assert_eq!(conflicts[0].theirs, "B");
         assert_eq!(
             result
                 .iter()
                 .map(|line| line.text.as_str())
                 .collect::<Vec<_>>(),
-            vec!["a", "B"]
+            vec!["a"]
         );
     }
 
@@ -1466,7 +2304,129 @@ L8
         let (_rows, conflicts, _result) = build_three_way_document(base, ours, theirs);
 
         assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].block_kind, ConflictBlockKind::Conflict);
         assert_eq!(conflicts[0].ours, "");
         assert_eq!(conflicts[0].theirs, "B");
+    }
+
+    #[test]
+    fn parses_merge_msg_branch_names() {
+        assert_eq!(
+            parse_merge_msg_subject("Merge branch 'feature-x' into main"),
+            Some("feature-x".into())
+        );
+        assert_eq!(
+            parse_merge_msg_subject("Merge remote-tracking branch 'origin/feature-x'"),
+            Some("origin/feature-x".into())
+        );
+        assert_eq!(
+            parse_merge_msg_subject("Merge pull request #12 from alice/fix-login"),
+            Some("alice/fix-login".into())
+        );
+        assert_eq!(parse_merge_msg_subject("Not a merge message"), None);
+    }
+
+    #[test]
+    fn cleans_name_rev_output() {
+        assert_eq!(clean_name_rev("remotes/origin/feature~2"), "origin/feature");
+        assert_eq!(clean_name_rev("main^0"), "main");
+        assert_eq!(clean_name_rev("  feature  "), "feature");
+    }
+
+    #[test]
+    fn webstorm_style_markdown_conflict() {
+        let content = "\
+<<<<<<< HEAD
+3. 点击导出按钮复制格式
+
+## 技术栈
+
+- React
+- Node.js
+- Express
+
+## 作者
+
+Feature Team 1
+=======
+3. 支持暗色/亮色主题切换
+4. 点击导出按钮保存到服务器
+
+## 技术栈
+
+- React 18
+- Node.js
+- Express
+- Python 3.9+
+- Go 1.20+
+
+## 高级功能
+
+### 自动保存
+编辑器会自动保存你的工作到本地存储。
+
+### 代码块支持
+支持多种编程语言的语法高亮。
+
+## 作者
+
+Feature Team 2
+>>>>>>> feature-branch-2
+";
+        let parsed = parse_conflict_file(content).unwrap();
+        let (rows, conflicts, result) = build_marker_document(&parsed);
+
+        assert_eq!(conflicts.len(), 4);
+
+        assert_eq!(conflicts[0].block_kind, ConflictBlockKind::Conflict);
+        assert_eq!(conflicts[0].ours, "3. 点击导出按钮复制格式");
+        assert_eq!(
+            conflicts[0].theirs,
+            "3. 支持暗色/亮色主题切换\n4. 点击导出按钮保存到服务器"
+        );
+
+        assert_eq!(conflicts[1].block_kind, ConflictBlockKind::Conflict);
+        assert_eq!(conflicts[1].ours, "- React");
+        assert_eq!(conflicts[1].theirs, "- React 18");
+
+        let express_idx = rows
+            .iter()
+            .position(|row| {
+                row.kind == MergeRowKind::Context
+                    && row.ours_line.as_ref().is_some_and(|l| l.text == "- Express")
+            })
+            .expect("Express context row");
+        assert!(
+            matches!(
+                &rows[express_idx + 1],
+                MergeRow {
+                    kind: MergeRowKind::Context,
+                    conflict_index: None,
+                    ours_line: Some(PaneLine { text, .. }),
+                    ..
+                } if text.is_empty()
+            ),
+            "Express 下方应保留左侧空行上下文，不能被绿块吃掉: {:?}",
+            rows[express_idx + 1]
+        );
+
+        assert_eq!(conflicts[2].block_kind, ConflictBlockKind::Change);
+        assert_eq!(conflicts[2].ours, "");
+        assert!(conflicts[2].theirs.starts_with("- Python 3.9+\n- Go 1.20+"));
+        assert!(conflicts[2].theirs.contains("## 高级功能"));
+        assert!(conflicts[2].theirs.contains("### 代码块支持"));
+
+        assert_eq!(conflicts[3].block_kind, ConflictBlockKind::Conflict);
+        assert_eq!(conflicts[3].ours, "Feature Team 1");
+        assert_eq!(conflicts[3].theirs, "Feature Team 2");
+
+        assert_eq!(
+            result
+                .iter()
+                .map(|line| line.text.as_str())
+                .collect::<Vec<_>>(),
+            vec!["", "## 技术栈", "", "- Node.js", "- Express", "## 作者", ""]
+        );
+        assert_eq!(count_conflict_blocks(content), 4);
     }
 }

@@ -243,6 +243,7 @@ button.ghost {
   gap: 1px;
   --line-height: 1.55rem;
   --action-rail-width: 4.5rem;
+  --conflict-rail-width: 2.75rem;
 }
 
 .merge-headers {
@@ -250,9 +251,9 @@ button.ghost {
   display: grid;
   grid-template-columns:
     minmax(0, 1fr)
-    var(--action-rail-width)
+    var(--conflict-rail-width)
     minmax(0, 1fr)
-    var(--action-rail-width)
+    var(--conflict-rail-width)
     minmax(0, 1fr);
   gap: 1px;
   background: #d6cbb8;
@@ -276,9 +277,9 @@ button.ghost {
   display: grid;
   grid-template-columns:
     minmax(0, 1fr)
-    var(--action-rail-width)
+    var(--conflict-rail-width)
     minmax(0, 1fr)
-    var(--action-rail-width)
+    var(--conflict-rail-width)
     minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
   gap: 1px;
@@ -286,22 +287,19 @@ button.ghost {
 }
 
 /*
- * 三栏各自纵向滚动；gutter 固定不滚，用 SVG 连接带桥接两侧冲突块。
- * 代码区横向滚动在内层 merge-pane-scroll。
+ * 三栏各自纵向滚动；横向与纵向共用 pane 滚动，便于行号 sticky。
  */
 .merge-pane {
   min-width: 0;
   min-height: 0;
   height: 100%;
-  overflow-x: hidden;
-  overflow-y: auto;
+  overflow: auto;
   background: #fbf7f0;
 }
 
 .merge-pane-scroll {
   min-width: 0;
-  overflow-x: auto;
-  overflow-y: hidden;
+  overflow: visible;
 }
 
 .merge-pane-lines {
@@ -337,43 +335,35 @@ button.ghost {
 }
 
 .conflict-link-path {
-  fill: #e0c49a;
-  stroke: rgba(150, 110, 60, 0.45);
+  fill: #e8a0a0;
+  stroke: rgba(150, 55, 55, 0.4);
   stroke-width: 1;
   pointer-events: fill;
   cursor: pointer;
 }
 
 .conflict-link-path.is-active {
-  fill: #d4b484;
-  stroke: rgba(120, 85, 40, 0.55);
+  fill: #c96a6a;
+  stroke: rgba(110, 30, 30, 0.65);
 }
 
-.conflict-link-actions {
-  position: absolute;
-  left: 50%;
-  z-index: 2;
-  transform: translate(-50%, -50%);
-  pointer-events: auto;
+.change-link-path {
+  fill: #a8d4b0;
+  stroke: rgba(45, 105, 65, 0.35);
+  stroke-width: 1;
+  pointer-events: fill;
+  cursor: pointer;
 }
 
-.conflict-link-actions .inline-actions {
-  margin-top: 0;
-  opacity: 1;
-  background: rgba(251, 247, 240, 0.96);
-  border: 1px solid #d6cbb8;
-  border-radius: 5px;
-  box-shadow: 0 1px 2px rgba(70, 55, 30, 0.1);
-}
-
-.conflict-link-actions.is-active .inline-actions,
-.conflict-link-actions:hover .inline-actions {
-  border-color: #b08c5a;
+.change-link-path.is-active {
+  fill: #6aad80;
+  stroke: rgba(25, 75, 45, 0.6);
 }
 
 .merge-cell {
   display: grid;
   grid-template-columns: 3.25rem minmax(max-content, 1fr);
+  grid-template-areas: "lineno text";
   position: relative;
   align-items: stretch;
   height: var(--line-height);
@@ -382,7 +372,6 @@ button.ghost {
   width: 100%;
   box-sizing: border-box;
   background: #fbf7f0;
-  border-bottom: 1px solid #efe8dc;
   font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
   font-size: 12.5px;
   line-height: 1.55;
@@ -398,30 +387,128 @@ button.ghost {
 }
 
 .merge-cell.row-conflict {
-  background: #edd9b8;
+  background: #f3d0d0;
 }
 
 .merge-cell.row-conflict.side-result {
-  background: #edd9b8;
+  background: #f3d0d0;
 }
 
 .merge-cell.row-conflict.side-result .line-number {
-  background: rgba(224, 196, 154, 0.55);
+  background: rgba(220, 150, 150, 0.35);
 }
 
 .merge-cell.row-active-conflict {
-  background: #e0c49a;
+  background: #d99090;
+}
+
+.merge-cell.row-conflict.row-active-conflict {
+  background: #d99090;
 }
 
 .merge-cell.row-active-conflict.side-result {
-  background: #d4b484;
+  background: #d07070;
+}
+
+.merge-cell.row-conflict.row-active-conflict.side-result {
+  background: #d07070;
 }
 
 .merge-cell.row-active-conflict.side-result .line-number {
-  background: rgba(196, 155, 100, 0.55);
+  background: rgba(170, 70, 70, 0.5);
+}
+
+.merge-cell.row-conflict.row-active-conflict.side-result .line-number {
+  background: rgba(170, 70, 70, 0.5);
+}
+
+.merge-cell.row-insert,
+.merge-cell.row-delete {
+  background: #d4e8da;
+}
+
+.merge-cell.row-insert.side-result,
+.merge-cell.row-delete.side-result {
+  background: #c8e0d0;
+}
+
+.merge-cell.row-insert.side-result .line-number,
+.merge-cell.row-delete.side-result .line-number {
+  background: rgba(120, 170, 135, 0.3);
+}
+
+.merge-cell.row-insert.row-active-conflict,
+.merge-cell.row-delete.row-active-conflict {
+  background: #8fc4a0;
+}
+
+.merge-cell.row-insert.row-active-conflict.side-result,
+.merge-cell.row-delete.row-active-conflict.side-result {
+  background: #78b890;
+}
+
+/* Result 未解决：整行色块改为居中细条，便于与两侧连接带收窄对齐 */
+.merge-cell.side-result.is-result-strip,
+.merge-cell.side-result.is-result-strip.is-empty,
+.merge-cell.side-result.is-result-strip.row-conflict,
+.merge-cell.side-result.is-result-strip.row-insert,
+.merge-cell.side-result.is-result-strip.row-delete,
+.merge-cell.side-result.is-result-strip.row-active-conflict,
+.merge-cell.side-result.is-result-strip.row-conflict.row-active-conflict,
+.merge-cell.side-result.is-result-strip.row-insert.row-active-conflict,
+.merge-cell.side-result.is-result-strip.row-delete.row-active-conflict {
+  background: #fbf7f0;
+}
+
+.merge-cell.side-result.is-result-strip::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 5px;
+  transform: translateY(-50%);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.merge-cell.side-result.is-result-strip.row-conflict::before {
+  background: #e8a0a0;
+}
+
+.merge-cell.side-result.is-result-strip.row-conflict.row-active-conflict::before {
+  background: #c96a6a;
+}
+
+.merge-cell.side-result.is-result-strip.row-insert::before,
+.merge-cell.side-result.is-result-strip.row-delete::before {
+  background: #a8d4b0;
+}
+
+.merge-cell.side-result.is-result-strip.row-insert.row-active-conflict::before,
+.merge-cell.side-result.is-result-strip.row-delete.row-active-conflict::before {
+  background: #6aad80;
+}
+
+.merge-cell.side-result.is-result-strip .line-number,
+.merge-cell.side-result.is-result-strip.is-empty .line-number,
+.merge-cell.side-result.is-result-strip.row-conflict .line-number,
+.merge-cell.side-result.is-result-strip.row-insert .line-number,
+.merge-cell.side-result.is-result-strip.row-delete .line-number,
+.merge-cell.side-result.is-result-strip.row-active-conflict .line-number,
+.merge-cell.side-result.is-result-strip.row-conflict.row-active-conflict .line-number,
+.merge-cell.side-result.is-result-strip.row-insert.row-active-conflict .line-number,
+.merge-cell.side-result.is-result-strip.row-delete.row-active-conflict .line-number {
+  background: transparent;
+}
+
+.merge-cell.side-result.is-result-strip .line-text {
+  position: relative;
+  z-index: 2;
 }
 
 .line-number {
+  grid-area: lineno;
   display: flex;
   align-items: flex-start;
   justify-content: flex-end;
@@ -432,7 +519,153 @@ button.ghost {
   background: rgba(255, 250, 243, 0.55);
 }
 
+.cell-actions {
+  grid-area: actions;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  padding: 0 0.1rem;
+  background: rgba(255, 250, 243, 0.35);
+}
+
+.cell-actions .inline-actions {
+  margin-top: 0;
+  opacity: 1;
+  background: rgba(251, 247, 240, 0.96);
+  border: 1px solid #d6cbb8;
+  border-radius: 5px;
+  box-shadow: 0 1px 2px rgba(70, 55, 30, 0.1);
+}
+
+.cell-actions.is-active .inline-actions,
+.cell-actions:hover .inline-actions {
+  border-color: #b07070;
+}
+
+/* 左侧：代码 | 操作 | 行号；右侧：行号 | 操作 | 代码 */
+.merge-cell.side-ours {
+  grid-template-columns:
+    minmax(max-content, 1fr)
+    var(--action-rail-width)
+    3.25rem;
+  grid-template-areas: "text actions lineno";
+  width: max-content;
+  min-width: 100%;
+}
+
+.merge-cell.side-ours .line-number {
+  position: sticky;
+  right: 0;
+  z-index: 2;
+  border-right: none;
+  border-left: 1px solid #efe8dc;
+  padding: 0.15rem 0.25rem 0.15rem 0.45rem;
+  background: #fbf7f0;
+}
+
+.merge-cell.side-ours .cell-actions {
+  position: sticky;
+  right: 3.25rem;
+  z-index: 2;
+  background: #fbf7f0;
+}
+
+.merge-cell.side-ours.row-conflict .line-number,
+.merge-cell.side-ours.row-conflict .cell-actions {
+  background: #f3d0d0;
+}
+
+.merge-cell.side-ours.row-active-conflict .line-number,
+.merge-cell.side-ours.row-active-conflict .cell-actions {
+  background: #d99090;
+}
+
+.merge-cell.side-ours.row-insert .line-number,
+.merge-cell.side-ours.row-insert .cell-actions,
+.merge-cell.side-ours.row-delete .line-number,
+.merge-cell.side-ours.row-delete .cell-actions {
+  background: #d4e8da;
+}
+
+.merge-cell.side-ours.row-insert.row-active-conflict .line-number,
+.merge-cell.side-ours.row-insert.row-active-conflict .cell-actions,
+.merge-cell.side-ours.row-delete.row-active-conflict .line-number,
+.merge-cell.side-ours.row-delete.row-active-conflict .cell-actions {
+  background: #8fc4a0;
+}
+
+.merge-cell.side-ours.is-empty .line-number,
+.merge-cell.side-ours.is-empty .cell-actions {
+  background: #f3eee4;
+}
+
+.merge-cell.side-theirs {
+  grid-template-columns:
+    3.25rem
+    var(--action-rail-width)
+    minmax(max-content, 1fr);
+  grid-template-areas: "lineno actions text";
+  width: max-content;
+  min-width: 100%;
+}
+
+.merge-cell.side-theirs .line-number {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: #fbf7f0;
+}
+
+.merge-cell.side-theirs .cell-actions {
+  position: sticky;
+  left: 3.25rem;
+  z-index: 2;
+  background: #fbf7f0;
+}
+
+.merge-cell.side-theirs.row-conflict .line-number,
+.merge-cell.side-theirs.row-conflict .cell-actions {
+  background: #f3d0d0;
+}
+
+.merge-cell.side-theirs.row-active-conflict .line-number,
+.merge-cell.side-theirs.row-active-conflict .cell-actions {
+  background: #d99090;
+}
+
+.merge-cell.side-theirs.row-insert .line-number,
+.merge-cell.side-theirs.row-insert .cell-actions,
+.merge-cell.side-theirs.row-delete .line-number,
+.merge-cell.side-theirs.row-delete .cell-actions {
+  background: #d4e8da;
+}
+
+.merge-cell.side-theirs.row-insert.row-active-conflict .line-number,
+.merge-cell.side-theirs.row-insert.row-active-conflict .cell-actions,
+.merge-cell.side-theirs.row-delete.row-active-conflict .line-number,
+.merge-cell.side-theirs.row-delete.row-active-conflict .cell-actions {
+  background: #8fc4a0;
+}
+
+.merge-cell.side-theirs.is-empty .line-number,
+.merge-cell.side-theirs.is-empty .cell-actions {
+  background: #f3eee4;
+}
+
+.merge-cell.side-result .line-number {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: #fbf7f0;
+}
+
+.merge-cell.side-result.is-empty .line-number {
+  background: #f3eee4;
+}
+
 .line-text {
+  grid-area: text;
   display: block;
   margin: 0;
   padding: 0.15rem 0.55rem;
@@ -650,6 +883,14 @@ button.ghost {
   padding: 0.65rem 0.85rem;
   border-top: 1px solid #d6cbb8;
   background: rgba(255, 250, 243, 0.95);
+}
+
+.bottombar-actions-left {
+  flex: none;
+}
+
+.bottombar-status {
+  flex: 1 1 auto;
 }
 
 @media (max-width: 720px) {

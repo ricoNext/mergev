@@ -24,7 +24,12 @@ import {
 import "./App.css";
 
 type GitOperation = "none" | "merge" | "rebase" | "cherryPick" | "revert";
-type ConflictDecision = "unresolved" | "ours" | "theirs";
+type ConflictDecision =
+  | "unresolved"
+  | "ours"
+  | "theirs"
+  | "oursThenTheirs"
+  | "theirsThenOurs";
 type SideStatus = "modified" | "added" | "deleted";
 type MergeRowKind = "context" | "conflict" | "insert" | "delete" | "empty";
 type ResultSource =
@@ -76,6 +81,8 @@ type ConflictRegion = {
   rowStart: number;
   rowEnd: number;
   decision: ConflictDecision;
+  /** conflict=双方红；change=单方绿；均需手动 Accept */
+  blockKind?: "conflict" | "change";
   ours: string;
   theirs: string;
 };
@@ -105,6 +112,12 @@ type MergeSession = {
   rows: MergeRow[];
   resultLines: ResultLine[];
   conflicts: ConflictRegion[];
+  activeConflict: number;
+  dirty: boolean;
+};
+
+type MergeUndoEntry = {
+  decisions: ConflictDecision[];
   activeConflict: number;
   dirty: boolean;
 };
@@ -157,6 +170,141 @@ function splitLines(text: string): string[] {
   return lines;
 }
 
+function sideHasSubstantive(text: string): boolean {
+  return splitLines(text).some((line) => line.trim().length > 0);
+}
+
+function isChangeBlock(conflict: ConflictRegion | null | undefined): boolean {
+  if (!conflict) {
+    return false;
+  }
+  if (conflict.blockKind) {
+    return conflict.blockKind === "change";
+  }
+  return (
+    !sideHasSubstantive(conflict.ours) || !sideHasSubstantive(conflict.theirs)
+  );
+}
+
+/** 单方绿块在无内容侧不着色，只留对齐空行；已合并到 Result 的一侧不再标成冲突 */
+function sideRowKind(
+  side: "ours" | "theirs",
+  rowKind: MergeRowKind,
+  conflict: ConflictRegion | null | undefined,
+): MergeRowKind {
+  if (
+    (rowKind === "insert" || rowKind === "conflict") &&
+    isChangeBlock(conflict)
+  ) {
+    const sideText = side === "ours" ? conflict?.ours ?? "" : conflict?.theirs ?? "";
+    if (!sideHasSubstantive(sideText)) {
+      return "empty";
+    }
+  }
+  if (rowKind === "insert" || rowKind === "conflict" || rowKind === "delete") {
+    if (side === "ours" && conflict && decisionIncludesOurs(conflict.decision)) {
+      return "context";
+    }
+    if (
+      side === "theirs" &&
+      conflict &&
+      decisionIncludesTheirs(conflict.decision)
+    ) {
+      return "context";
+    }
+  }
+  return rowKind;
+}
+
+function sideHasConflictActions(
+  side: "ours" | "theirs",
+  conflict: ConflictRegion | null | undefined,
+): boolean {
+  if (!conflict) {
+    return false;
+  }
+  if (side === "ours" && decisionIncludesOurs(conflict.decision)) {
+    return false;
+  }
+  if (side === "theirs" && decisionIncludesTheirs(conflict.decision)) {
+    return false;
+  }
+  if (!isChangeBlock(conflict)) {
+    return true;
+  }
+  const sideText = side === "ours" ? conflict.ours : conflict.theirs;
+  return sideHasSubstantive(sideText);
+}
+
+function sideDecisionMerged(
+  side: "ours" | "theirs",
+  conflict: ConflictRegion | null | undefined,
+): boolean {
+  if (!conflict) {
+    return false;
+  }
+  return side === "ours"
+    ? decisionIncludesOurs(conflict.decision)
+    : decisionIncludesTheirs(conflict.decision);
+}
+
+function paneHighlightText(
+  rows: MergeRow[],
+  side: "ours" | "result" | "theirs",
+): string {
+  return rows
+    .map((row) => {
+      if (side === "ours") {
+        return row.oursLine?.text ?? "";
+      }
+      if (side === "theirs") {
+        return row.theirsLine?.text ?? "";
+      }
+      return row.resultLine?.text ?? "";
+    })
+    .join("\n");
+}
+
+function decisionIncludesOurs(decision: ConflictDecision): boolean {
+  return (
+    decision === "ours" ||
+    decision === "oursThenTheirs" ||
+    decision === "theirsThenOurs"
+  );
+}
+
+function decisionIncludesTheirs(decision: ConflictDecision): boolean {
+  return (
+    decision === "theirs" ||
+    decision === "oursThenTheirs" ||
+    decision === "theirsThenOurs"
+  );
+}
+
+/** 先接受一侧后再接受另一侧时，追加而不是替换。 */
+function resolveNextDecision(
+  current: ConflictDecision,
+  incoming: ConflictDecision,
+): ConflictDecision {
+  if (incoming === "unresolved") {
+    return "unresolved";
+  }
+  if (current === "unresolved") {
+    return incoming;
+  }
+  if (current === incoming) {
+    return current;
+  }
+  if (current === "ours" && incoming === "theirs") {
+    return "oursThenTheirs";
+  }
+  if (current === "theirs" && incoming === "ours") {
+    return "theirsThenOurs";
+  }
+  // 已是双方拼接时再点单侧 → 改为仅该侧
+  return incoming;
+}
+
 function decisionResultLines(
   decision: ConflictDecision,
   ours: string,
@@ -167,6 +315,16 @@ function decisionResultLines(
       return { source: "ours", lines: splitLines(ours) };
     case "theirs":
       return { source: "theirs", lines: splitLines(theirs) };
+    case "oursThenTheirs":
+      return {
+        source: "manual",
+        lines: [...splitLines(ours), ...splitLines(theirs)],
+      };
+    case "theirsThenOurs":
+      return {
+        source: "manual",
+        lines: [...splitLines(theirs), ...splitLines(ours)],
+      };
     case "unresolved":
     default:
       // 中间只留一行细占位，连接带向 Result 收窄（避免中间块过粗）
@@ -248,33 +406,125 @@ function rebuildSession(
       document.conflicts.find((item) => item.index === conflictIndex) ??
       document.conflicts[conflictCursor];
     const decision = decisions[conflictIndex] ?? "unresolved";
-    const oursLines = splitLines(region.ours);
-    const theirsLines = splitLines(region.theirs);
+    const blockKind =
+      region.blockKind ??
+      (sideHasSubstantive(region.ours) && sideHasSubstantive(region.theirs)
+        ? "conflict"
+        : "change");
+    const rowKind: MergeRowKind =
+      blockKind === "change" ? "insert" : "conflict";
+
+    // 从文档行重建，保留空行与两侧对齐（避免 join/splitLines 丢空行）
+    const conflictDocRows: MergeRow[] = [];
+    {
+      let i = rowIndex;
+      while (
+        i < document.rows.length &&
+        document.rows[i].conflictIndex === conflictIndex
+      ) {
+        conflictDocRows.push(document.rows[i]);
+        i += 1;
+      }
+    }
+
+    let docOffset = 0;
+    // 单方绿块：空侧前导空行提成上下文（Express 下空行留在左侧）
+    if (blockKind === "change") {
+      while (docOffset < conflictDocRows.length) {
+        const docRow = conflictDocRows[docOffset];
+        const oursIsBlank =
+          docRow.oursLine != null && docRow.oursLine.text.trim() === "";
+        const theirsIsBlank =
+          docRow.theirsLine != null && docRow.theirsLine.text.trim() === "";
+        const peelLeft =
+          !sideHasSubstantive(region.ours) &&
+          oursIsBlank &&
+          (docRow.theirsLine == null || !theirsIsBlank);
+        const peelRight =
+          !sideHasSubstantive(region.theirs) &&
+          theirsIsBlank &&
+          (docRow.oursLine == null || !oursIsBlank);
+        if (!peelLeft && !peelRight) {
+          break;
+        }
+        if (peelLeft) {
+          rows.push({
+            id: `r${rows.length}`,
+            kind: "context",
+            conflictIndex: null,
+            oursLine: docRow.oursLine,
+            resultLine: null,
+            theirsLine: null,
+          });
+          if (docRow.oursLine?.number != null) {
+            oursLineNo = docRow.oursLine.number + 1;
+          }
+          // 同一行还有右侧实质内容时，只剥左侧空行，右侧留在冲突块
+          if (docRow.theirsLine != null && !theirsIsBlank) {
+            conflictDocRows[docOffset] = {
+              ...docRow,
+              oursLine: null,
+            };
+            break;
+          }
+          docOffset += 1;
+          continue;
+        }
+        rows.push({
+          id: `r${rows.length}`,
+          kind: "context",
+          conflictIndex: null,
+          oursLine: null,
+          resultLine: null,
+          theirsLine: docRow.theirsLine,
+        });
+        if (docRow.theirsLine?.number != null) {
+          theirsLineNo = docRow.theirsLine.number + 1;
+        }
+        if (docRow.oursLine != null && !oursIsBlank) {
+          conflictDocRows[docOffset] = {
+            ...docRow,
+            theirsLine: null,
+          };
+          break;
+        }
+        docOffset += 1;
+      }
+    }
+
+    const remainingDocRows = conflictDocRows.slice(docOffset);
+    const oursText = remainingDocRows
+      .map((item) => item.oursLine?.text)
+      .filter((text): text is string => text != null)
+      .join("\n");
+    const theirsText = remainingDocRows
+      .map((item) => item.theirsLine?.text)
+      .filter((text): text is string => text != null)
+      .join("\n");
+
     const { source, lines: conflictResult } = decisionResultLines(
       decision,
-      region.ours,
-      region.theirs,
+      oursText || region.ours,
+      theirsText || region.theirs,
     );
     const rowStart = rows.length;
     const rowCount = Math.max(
-      oursLines.length,
-      theirsLines.length,
+      remainingDocRows.length,
       conflictResult.length,
       1,
     );
 
     for (let offset = 0; offset < rowCount; offset += 1) {
-      let oursLine: PaneLine | null = null;
-      let theirsLine: PaneLine | null = null;
+      const docRow = remainingDocRows[offset];
+      let oursLine: PaneLine | null = docRow?.oursLine ?? null;
+      let theirsLine: PaneLine | null = docRow?.theirsLine ?? null;
       let resultLine: PaneLine | null = null;
 
-      if (offset < oursLines.length) {
-        oursLine = { number: oursLineNo, text: oursLines[offset] };
-        oursLineNo += 1;
+      if (oursLine) {
+        oursLineNo = (oursLine.number ?? oursLineNo) + 1;
       }
-      if (offset < theirsLines.length) {
-        theirsLine = { number: theirsLineNo, text: theirsLines[offset] };
-        theirsLineNo += 1;
+      if (theirsLine) {
+        theirsLineNo = (theirsLine.number ?? theirsLineNo) + 1;
       }
       if (offset < conflictResult.length) {
         resultLine = { number: resultLineNo, text: conflictResult[offset] };
@@ -283,8 +533,7 @@ function rebuildSession(
 
       rows.push({
         id: `r${rows.length}`,
-        kind:
-          oursLine || theirsLine || resultLine ? "conflict" : "empty",
+        kind: oursLine || theirsLine || resultLine ? rowKind : "empty",
         conflictIndex,
         oursLine,
         resultLine,
@@ -305,16 +554,12 @@ function rebuildSession(
       rowStart,
       rowEnd: rows.length - 1,
       decision,
-      ours: region.ours,
-      theirs: region.theirs,
+      blockKind,
+      ours: oursText || region.ours,
+      theirs: theirsText || region.theirs,
     });
 
-    while (
-      rowIndex < document.rows.length &&
-      document.rows[rowIndex].conflictIndex === conflictIndex
-    ) {
-      rowIndex += 1;
-    }
+    rowIndex += conflictDocRows.length;
     conflictCursor += 1;
   }
 
@@ -739,26 +984,42 @@ function MergeScreen({
   const [paneHighlights, setPaneHighlights] = useState<PaneHighlights>(
     emptyPaneHighlights,
   );
+  const [undoStack, setUndoStack] = useState<MergeUndoEntry[]>([]);
   const unresolved = session
     ? session.decisions.filter((d) => d === "unresolved").length
     : 0;
   const canSave = session !== null && session.conflicts.length > 0 && unresolved === 0;
+  const canUndo = undoStack.length > 0;
 
   const oursLabel = session?.document.labels.ours ?? workspace.oursLabel;
   const theirsLabel = session?.document.labels.theirs ?? workspace.theirsLabel;
 
   const oursHighlightText = session
-    ? splitLines(session.document.ours).join("\n")
+    ? paneHighlightText(session.rows, "ours")
     : "";
   const theirsHighlightText = session
-    ? splitLines(session.document.theirs).join("\n")
+    ? paneHighlightText(session.rows, "theirs")
     : "";
   const resultHighlightText = session
-    ? session.resultLines.map((line) => line.text).join("\n")
+    ? paneHighlightText(session.rows, "result")
     : "";
 
   function updateSession(next: MergeSession) {
     onChangeView({ ...view, session: next, saveError: null });
+  }
+
+  function pushUndoSnapshot() {
+    if (!session) {
+      return;
+    }
+    setUndoStack((stack) => [
+      ...stack,
+      {
+        decisions: [...session.decisions],
+        activeConflict: session.activeConflict,
+        dirty: session.dirty,
+      },
+    ]);
   }
 
   function setDecision(decision: ConflictDecision, conflictIndex?: number) {
@@ -769,14 +1030,33 @@ function MergeScreen({
     if (index < 0 || index >= session.decisions.length) {
       return;
     }
+    const next = resolveNextDecision(session.decisions[index], decision);
+    if (next === session.decisions[index]) {
+      return;
+    }
+    pushUndoSnapshot();
     const decisions = [...session.decisions];
-    decisions[index] = decision;
+    decisions[index] = next;
     const jumpTo =
-      decision === "unresolved"
-        ? index
-        : nextUnresolvedIndex(decisions, index);
+      next === "unresolved" ? index : nextUnresolvedIndex(decisions, index);
     updateSession(
       rebuildSession(session.document, decisions, jumpTo, true),
+    );
+  }
+
+  function undoDecision() {
+    if (!session || undoStack.length === 0) {
+      return;
+    }
+    const previous = undoStack[undoStack.length - 1];
+    setUndoStack((stack) => stack.slice(0, -1));
+    updateSession(
+      rebuildSession(
+        session.document,
+        previous.decisions,
+        previous.activeConflict,
+        previous.dirty,
+      ),
     );
   }
 
@@ -854,6 +1134,7 @@ function MergeScreen({
 
   useEffect(() => {
     setPaneHighlights(emptyPaneHighlights());
+    setUndoStack([]);
   }, [view.selectedPath]);
 
   useEffect(() => {
@@ -929,9 +1210,26 @@ function MergeScreen({
       }
 
       const key = event.key.toLowerCase();
+      const hasMod = event.metaKey || event.ctrlKey;
+      if (hasMod && key === "z" && !event.shiftKey) {
+        if (!canUndo) {
+          return;
+        }
+        event.preventDefault();
+        undoDecision();
+        return;
+      }
+      if (hasMod && key === "s" && canSave && !view.saving) {
+        event.preventDefault();
+        void saveFile();
+        return;
+      }
       if (key === "escape") {
         event.preventDefault();
         onBack();
+        return;
+      }
+      if (hasMod) {
         return;
       }
       if (key === "n") {
@@ -1012,6 +1310,22 @@ function MergeScreen({
             </div>
 
             <footer className="bottombar">
+              <div className="bottombar-actions bottombar-actions-left">
+                <button
+                  type="button"
+                  disabled={session.activeConflict < 0}
+                  onClick={() => setDecision("ours")}
+                >
+                  Accept Left
+                </button>
+                <button
+                  type="button"
+                  disabled={session.activeConflict < 0}
+                  onClick={() => setDecision("theirs")}
+                >
+                  Accept Right
+                </button>
+              </div>
               <div className="bottombar-status">
                 {session.document.path}
                 {session.conflicts.length > 0 ? (
@@ -1032,25 +1346,20 @@ function MergeScreen({
               <div className="bottombar-actions">
                 <button
                   type="button"
-                  disabled={session.activeConflict < 0}
-                  onClick={() => setDecision("ours")}
-                >
-                  Yours
-                </button>
-                <button
-                  type="button"
-                  disabled={session.activeConflict < 0}
-                  onClick={() => setDecision("theirs")}
-                >
-                  Theirs
-                </button>
-                <button
-                  type="button"
                   className="ghost"
                   disabled={session.activeConflict < 0}
                   onClick={() => setDecision("unresolved")}
                 >
                   Reset
+                </button>
+                <button
+                  type="button"
+                  className="ghost"
+                  disabled={!canUndo}
+                  title="Ctrl/⌘ + Z"
+                  onClick={() => undoDecision()}
+                >
+                  撤销
                 </button>
                 <button
                   type="button"
@@ -1176,12 +1485,28 @@ function ribbonPath(
   ].join(" ");
 }
 
+/** Result 端连接带高度：未解决时收成细条，两侧块高度不变 */
+function resultRibbonSpan(
+  top: number,
+  bottom: number,
+  lineHeight: number,
+  unresolved: boolean,
+): { top: number; bottom: number } {
+  const safeBottom = Math.max(top + 2, bottom);
+  if (!unresolved) {
+    return { top, bottom: safeBottom };
+  }
+  const mid = (top + safeBottom) / 2;
+  // 与 .is-result-strip::before 的 5px 细条对齐
+  const half = Math.max(2, Math.min(lineHeight * 0.18, 2.5));
+  return { top: mid - half, bottom: mid + half };
+}
+
 type ConflictLinkGeometry = {
   index: number;
   path: string;
-  buttonTop: number;
   isActive: boolean;
-  decision: ConflictDecision;
+  isChange: boolean;
 };
 
 function ConflictLinkGutter({
@@ -1193,7 +1518,6 @@ function ConflictLinkGutter({
   sidePaneRef,
   resultPaneRef,
   onSelectConflict,
-  onDecision,
 }: {
   side: "ours" | "theirs";
   conflicts: ConflictRegion[];
@@ -1203,7 +1527,6 @@ function ConflictLinkGutter({
   sidePaneRef: RefObject<HTMLDivElement | null>;
   resultPaneRef: RefObject<HTMLDivElement | null>;
   onSelectConflict: (index: number) => void;
-  onDecision: (decision: ConflictDecision, conflictIndex: number) => void;
 }) {
   const gutterRef = useRef<HTMLDivElement>(null);
   const [links, setLinks] = useState<ConflictLinkGeometry[]>([]);
@@ -1234,6 +1557,18 @@ function ConflictLinkGutter({
       const next: ConflictLinkGeometry[] = [];
 
       conflicts.forEach((conflict, order) => {
+        // 已合并到 Result 的一侧：不再画连接带
+        if (sideDecisionMerged(side, conflict)) {
+          return;
+        }
+        // 单方绿色变更：只在有内容的一侧画连接带（WebStorm：左侧不出现右侧独有绿块）
+        if (isChangeBlock(conflict)) {
+          const sideText = side === "ours" ? conflict.ours : conflict.theirs;
+          if (!sideHasSubstantive(sideText)) {
+            return;
+          }
+        }
+
         const measured = measureConflictY(
           sidePane,
           gutterRect.top,
@@ -1256,8 +1591,12 @@ function ConflictLinkGutter({
 
         const sideTop = sideBlock.top;
         const sideBottom = Math.max(sideTop + 2, sideBlock.bottom);
-        const resultTop = resultBlock.top;
-        const resultBottom = Math.max(resultTop + 2, resultBlock.bottom);
+        const { top: resultTop, bottom: resultBottom } = resultRibbonSpan(
+          resultBlock.top,
+          resultBlock.bottom,
+          lineHeight,
+          conflict.decision === "unresolved",
+        );
 
         if (
           (sideBottom < -120 && resultBottom < -120) ||
@@ -1278,19 +1617,13 @@ function ConflictLinkGutter({
                 sideBottom,
               );
 
-        const visibleTop = Math.max(0, Math.min(sideTop, sideBottom));
-        const visibleBottom = Math.min(height, Math.max(sideTop, sideBottom));
-        const buttonTop =
-          visibleBottom > visibleTop
-            ? (visibleTop + visibleBottom) / 2
-            : Math.max(8, Math.min(height - 8, (sideTop + sideBottom) / 2));
+        const isChange = isChangeBlock(conflict);
 
         next.push({
           index: conflict.index,
           path,
-          buttonTop,
           isActive: conflict.index === activeConflict,
-          decision: conflict.decision,
+          isChange,
         });
       });
 
@@ -1359,36 +1692,20 @@ function ConflictLinkGutter({
         height={size.height}
         viewBox={`0 0 ${Math.max(size.width, 1)} ${Math.max(size.height, 1)}`}
       >
-        {links.map((link) => (
-          <path
-            key={link.index}
-            d={link.path}
-            className={
-              link.isActive
-                ? "conflict-link-path is-active"
-                : "conflict-link-path"
-            }
-            onClick={() => onSelectConflict(link.index)}
-          />
-        ))}
+        {links.map((link) => {
+          const base = link.isChange
+            ? "change-link-path"
+            : "conflict-link-path";
+          return (
+            <path
+              key={link.index}
+              d={link.path}
+              className={link.isActive ? `${base} is-active` : base}
+              onClick={() => onSelectConflict(link.index)}
+            />
+          );
+        })}
       </svg>
-      {links.map((link) => (
-        <div
-          key={`action-${link.index}`}
-          className={
-            link.isActive
-              ? "conflict-link-actions is-active"
-              : "conflict-link-actions"
-          }
-          style={{ top: link.buttonTop }}
-        >
-          <InlineConflictActions
-            side={side}
-            decision={link.decision}
-            onDecision={(decision) => onDecision(decision, link.index)}
-          />
-        </div>
-      ))}
     </div>
   );
 }
@@ -1425,11 +1742,15 @@ function MergeGrid({
     return map;
   }, [conflicts]);
 
-  // 某侧完全没有内容的冲突：仍要在首行留占位，否则连接带/操作块无法定位
+  // 某侧完全没有内容的冲突：红块仍要在首行留占位以便连接带定位；
+  // 单方绿块只在有内容侧展示，空侧不占位（避免左侧出现绿色空块）。
   const emptySideConflicts = useMemo(() => {
     const ours = new Set<number>();
     const theirs = new Set<number>();
     for (const conflict of conflicts) {
+      if (isChangeBlock(conflict)) {
+        continue;
+      }
       ours.add(conflict.index);
       theirs.add(conflict.index);
     }
@@ -1461,11 +1782,14 @@ function MergeGrid({
     const oursText = row.oursLine?.text ?? "";
     const theirsText = row.theirsLine?.text ?? "";
     const shouldDiff =
-      row.kind === "conflict" &&
+      (row.kind === "conflict" || row.kind === "insert") &&
+      row.conflictIndex !== null &&
       row.oursLine !== null &&
       row.theirsLine !== null &&
       oursText !== theirsText;
     const sideTokens = shouldDiff ? wordDiffTokens(oursText, theirsText) : null;
+    const oursMerged = sideDecisionMerged("ours", conflict);
+    const theirsMerged = sideDecisionMerged("theirs", conflict);
     const resultDiffTokens =
       sideTokens && conflict
         ? conflict.decision === "ours"
@@ -1475,17 +1799,18 @@ function MergeGrid({
             : null
         : null;
 
+    const highlightLine = index + 1;
     const oursSyntax =
-      row.oursLine?.number != null
-        ? paneHighlights.ours.get(row.oursLine.number)
+      row.oursLine != null
+        ? paneHighlights.ours.get(highlightLine)
         : undefined;
     const resultSyntax =
-      row.resultLine?.number != null
-        ? paneHighlights.result.get(row.resultLine.number)
+      row.resultLine != null
+        ? paneHighlights.result.get(highlightLine)
         : undefined;
     const theirsSyntax =
-      row.theirsLine?.number != null
-        ? paneHighlights.theirs.get(row.theirsLine.number)
+      row.theirsLine != null
+        ? paneHighlights.theirs.get(highlightLine)
         : undefined;
 
     return {
@@ -1494,12 +1819,18 @@ function MergeGrid({
       isActive,
       showActions,
       conflict,
-      oursTokens: buildRenderTokens(oursSyntax, sideTokens?.left),
+      oursTokens: buildRenderTokens(
+        oursSyntax,
+        oursMerged ? undefined : sideTokens?.left,
+      ),
       resultTokens: buildRenderTokens(
         resultSyntax,
         resultDiffTokens ?? undefined,
       ),
-      theirsTokens: buildRenderTokens(theirsSyntax, sideTokens?.right),
+      theirsTokens: buildRenderTokens(
+        theirsSyntax,
+        theirsMerged ? undefined : sideTokens?.right,
+      ),
     };
   });
 
@@ -1508,14 +1839,16 @@ function MergeGrid({
       item.row.oursLine !== null ||
       (item.showActions &&
         item.row.conflictIndex !== null &&
-        emptySideConflicts.ours.has(item.row.conflictIndex)),
+        emptySideConflicts.ours.has(item.row.conflictIndex) &&
+        !sideDecisionMerged("ours", item.conflict)),
   );
   const theirsItems = renderedRows.filter(
     (item) =>
       item.row.theirsLine !== null ||
       (item.showActions &&
         item.row.conflictIndex !== null &&
-        emptySideConflicts.theirs.has(item.row.conflictIndex)),
+        emptySideConflicts.theirs.has(item.row.conflictIndex) &&
+        !sideDecisionMerged("theirs", item.conflict)),
   );
   // Result：只渲染有 resultLine 的行；未解决冲突仅一行细占位，连接带向中间收窄
   const resultItems = renderedRows.filter(
@@ -1535,6 +1868,16 @@ function MergeGrid({
       const existing = map.get(row.conflictIndex);
       if (existing) {
         existing.rowEnd = index;
+        if (row.oursLine?.text) {
+          existing.ours = existing.ours
+            ? `${existing.ours}\n${row.oursLine.text}`
+            : row.oursLine.text;
+        }
+        if (row.theirsLine?.text) {
+          existing.theirs = existing.theirs
+            ? `${existing.theirs}\n${row.theirsLine.text}`
+            : row.theirsLine.text;
+        }
         return;
       }
       map.set(row.conflictIndex, {
@@ -1542,6 +1885,7 @@ function MergeGrid({
         rowStart: index,
         rowEnd: index,
         decision: "unresolved",
+        blockKind: row.kind === "insert" ? "change" : "conflict",
         ours: row.oursLine?.text ?? "",
         theirs: row.theirsLine?.text ?? "",
       });
@@ -1552,7 +1896,7 @@ function MergeGrid({
   const layoutKey = `${rows.length}:${linkConflicts
     .map(
       (item) =>
-        `${item.index}:${item.decision}:${item.rowStart}:${item.rowEnd}`,
+        `${item.index}:${item.decision}:${item.blockKind ?? ""}:${item.rowStart}:${item.rowEnd}`,
     )
     .join("|")}`;
 
@@ -1565,13 +1909,19 @@ function MergeGrid({
               <MergeCell
                 key={`${item.row.id}-ours`}
                 side="ours"
-                rowKind={item.row.kind}
+                rowKind={sideRowKind("ours", item.row.kind, item.conflict)}
                 isActive={item.isActive}
                 rowIndex={item.index}
                 conflictIndex={item.row.conflictIndex}
                 line={item.row.oursLine}
                 renderTokens={item.oursTokens}
+                showActions={
+                  item.showActions &&
+                  sideHasConflictActions("ours", item.conflict)
+                }
+                decision={item.conflict?.decision}
                 onSelectConflict={onSelectConflict}
+                onDecision={onDecision}
               />
             ))}
           </div>
@@ -1587,7 +1937,6 @@ function MergeGrid({
         sidePaneRef={oursPaneRef}
         resultPaneRef={resultPaneRef}
         onSelectConflict={onSelectConflict}
-        onDecision={onDecision}
       />
 
       <div className="merge-pane pane-result" ref={resultPaneRef}>
@@ -1597,14 +1946,13 @@ function MergeGrid({
               <MergeCell
                 key={`${item.row.id}-result`}
                 side="result"
-                rowKind={
-                  item.row.conflictIndex != null ? "conflict" : item.row.kind
-                }
+                rowKind={item.row.kind}
                 isActive={item.isActive}
                 rowIndex={item.index}
                 conflictIndex={item.row.conflictIndex}
                 line={item.row.resultLine}
                 renderTokens={item.resultTokens}
+                decision={item.conflict?.decision}
                 onSelectConflict={onSelectConflict}
               />
             ))}
@@ -1621,7 +1969,6 @@ function MergeGrid({
         sidePaneRef={theirsPaneRef}
         resultPaneRef={resultPaneRef}
         onSelectConflict={onSelectConflict}
-        onDecision={onDecision}
       />
 
       <div className="merge-pane pane-theirs" ref={theirsPaneRef}>
@@ -1631,13 +1978,19 @@ function MergeGrid({
               <MergeCell
                 key={`${item.row.id}-theirs`}
                 side="theirs"
-                rowKind={item.row.kind}
+                rowKind={sideRowKind("theirs", item.row.kind, item.conflict)}
                 isActive={item.isActive}
                 rowIndex={item.index}
                 conflictIndex={item.row.conflictIndex}
                 line={item.row.theirsLine}
                 renderTokens={item.theirsTokens}
+                showActions={
+                  item.showActions &&
+                  sideHasConflictActions("theirs", item.conflict)
+                }
+                decision={item.conflict?.decision}
                 onSelectConflict={onSelectConflict}
+                onDecision={onDecision}
               />
             ))}
           </div>
@@ -1655,7 +2008,10 @@ function MergeCell({
   conflictIndex,
   line,
   renderTokens,
+  showActions = false,
+  decision,
   onSelectConflict,
+  onDecision,
 }: {
   side: "ours" | "result" | "theirs";
   rowKind: MergeRowKind;
@@ -1664,8 +2020,47 @@ function MergeCell({
   conflictIndex: number | null;
   line: PaneLine | null;
   renderTokens?: RenderToken[];
+  showActions?: boolean;
+  decision?: ConflictDecision;
   onSelectConflict: (index: number) => void;
+  onDecision?: (decision: ConflictDecision, conflictIndex: number) => void;
 }) {
+  const lineText = line?.text ?? "";
+  const safeRenderTokens =
+    renderTokens &&
+    renderTokens.length > 0 &&
+    renderTokens.map((token) => token.text).join("") === lineText
+      ? renderTokens
+      : undefined;
+  const isResultStrip =
+    side === "result" &&
+    conflictIndex != null &&
+    decision === "unresolved" &&
+    (rowKind === "conflict" || rowKind === "insert" || rowKind === "delete");
+  const isConflictChrome =
+    rowKind === "conflict" || rowKind === "insert" || rowKind === "delete";
+
+  const actions =
+    showActions &&
+    side !== "result" &&
+    conflictIndex != null &&
+    decision != null &&
+    onDecision ? (
+      <span
+        className={
+          isActive ? "cell-actions is-active" : "cell-actions"
+        }
+      >
+        <InlineConflictActions
+          side={side}
+          decision={decision}
+          onDecision={(next) => onDecision(next, conflictIndex)}
+        />
+      </span>
+    ) : side !== "result" ? (
+      <span className="cell-actions" aria-hidden="true" />
+    ) : null;
+
   return (
     <div
       className={[
@@ -1673,14 +2068,17 @@ function MergeCell({
         `side-${side}`,
         `row-${rowKind}`,
         line ? "" : "is-empty",
-        conflictIndex !== null ? "is-conflict" : "",
-        isActive ? "row-active-conflict" : "",
+        conflictIndex !== null && isConflictChrome ? "is-conflict" : "",
+        isActive && isConflictChrome ? "row-active-conflict" : "",
+        isResultStrip ? "is-result-strip" : "",
       ]
         .filter(Boolean)
         .join(" ")}
       data-row-index={rowIndex}
       data-conflict-index={
-        conflictIndex != null ? String(conflictIndex) : undefined
+        conflictIndex != null && isConflictChrome
+          ? String(conflictIndex)
+          : undefined
       }
       onClick={() => {
         if (conflictIndex != null) {
@@ -1689,9 +2087,10 @@ function MergeCell({
       }}
     >
       <span className="line-number">{line?.number ?? ""}</span>
+      {actions}
       <code className="line-text">
-        {renderTokens && renderTokens.length > 0
-          ? renderTokens.map((token, index) => (
+        {safeRenderTokens
+          ? safeRenderTokens.map((token, index) => (
               <span
                 key={index}
                 className={
@@ -1704,7 +2103,9 @@ function MergeCell({
                 {token.text}
               </span>
             ))
-          : (line?.text ?? "")}
+          : lineText.length === 0
+            ? "\u00a0"
+            : lineText}
       </code>
     </div>
   );
@@ -1719,7 +2120,6 @@ function InlineConflictActions({
   decision: ConflictDecision;
   onDecision: (decision: ConflictDecision) => void;
 }) {
-  const acceptDecision = side === "ours" ? "ours" : "theirs";
   const acceptTitle =
     side === "ours" ? "Accept Yours (1)" : "Accept Theirs (2)";
 
@@ -1742,7 +2142,7 @@ function InlineConflictActions({
         <button
           type="button"
           className={
-            decision === acceptDecision ? "inline-btn active" : "inline-btn"
+            decisionIncludesOurs(decision) ? "inline-btn active" : "inline-btn"
           }
           title={acceptTitle}
           onClick={(event) => {
@@ -1761,7 +2161,7 @@ function InlineConflictActions({
       <button
         type="button"
         className={
-          decision === acceptDecision ? "inline-btn active" : "inline-btn"
+          decisionIncludesTheirs(decision) ? "inline-btn active" : "inline-btn"
         }
         title={acceptTitle}
         onClick={(event) => {

@@ -84,6 +84,8 @@ fn parse_decision(value: &str) -> Result<ConflictDecision, String> {
         "unresolved" => Ok(ConflictDecision::Unresolved),
         "ours" => Ok(ConflictDecision::Ours),
         "theirs" => Ok(ConflictDecision::Theirs),
+        "oursThenTheirs" => Ok(ConflictDecision::OursThenTheirs),
+        "theirsThenOurs" => Ok(ConflictDecision::TheirsThenOurs),
         other => Err(format!("未知决策: {other}")),
     }
 }
