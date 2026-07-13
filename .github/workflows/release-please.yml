@@ -86,7 +86,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ needs.release-please.outputs.tag_name }}
-          releaseName: Mergev ${{ needs.release-please.outputs.tag_name }}
+          releaseName: mergev ${{ needs.release-please.outputs.tag_name }}
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}

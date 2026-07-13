@@ -250,7 +250,7 @@ pub fn run() {
 
             #[cfg(target_os = "macos")]
             let menu = {
-                let app_menu = SubmenuBuilder::new(app, "Mergev")
+                let app_menu = SubmenuBuilder::new(app, "mergev")
                     .about(None)
                     .separator()
                     .services()

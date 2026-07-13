@@ -174,4 +174,4 @@ if process.terminationStatus != 0 {
     fatalError("Tauri icon generation failed with status \(process.terminationStatus)")
 }
 
-print("Generated Mergev app icons in \(iconDir.path)")
+print("Generated mergev app icons in \(iconDir.path)")

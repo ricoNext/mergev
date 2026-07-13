@@ -2,7 +2,7 @@
 
 ## 目标
 
-把 Mergev 的合并页面从“冲突块选择器”升级为“类 WebStorm 的完整文件三栏合并编辑器”。
+把 mergev 的合并页面从“冲突块选择器”升级为“类 WebStorm 的完整文件三栏合并编辑器”。
 
 最高优先级能力：
 
@@ -117,7 +117,7 @@ git show :2:path   # ours
 git show :3:path   # theirs
 ```
 
-同时读取工作区文件，因为它包含 conflict markers，也可能包含用户在 Mergev 外部做过的手动修改。
+同时读取工作区文件，因为它包含 conflict markers，也可能包含用户在 mergev 外部做过的手动修改。
 
 ### 第 2 步：解析工作区冲突区域
 
