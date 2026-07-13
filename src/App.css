@@ -246,6 +246,22 @@ button.ghost {
   --conflict-rail-width: 2.75rem;
 }
 
+.pane-title-result {
+  position: relative;
+}
+
+.result-success-message {
+  min-height: 0;
+  min-width: 0;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  background: #d6cbb8;
+  gap: 1px;
+  --line-height: 1.55rem;
+  --action-rail-width: 4.5rem;
+  --conflict-rail-width: 2.75rem;
+}
+
 .merge-headers {
   min-width: 0;
   display: grid;
@@ -266,8 +282,55 @@ button.ghost {
 .merge-scroll {
   min-height: 0;
   min-width: 0;
+  height: 100%;
   overflow: hidden;
   background: #d6cbb8;
+  position: relative;
+}
+
+.result-success-banner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  background: #d4e8da;
+  border-bottom: 1px solid #8fc4a0;
+  color: #245c4a;
+  padding: 0.35rem 0.75rem;
+  text-align: center;
+  font-weight: 500;
+  font-size: 0.75rem;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  pointer-events: none;
+}
+
+.result-success-banner > * {
+  pointer-events: auto;
+}
+
+.success-banner-action {
+  background: #245c4a;
+  color: #fff;
+  border: none;
+  padding: 0.25rem 0.6rem;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.success-banner-action:hover:not(:disabled) {
+  background: #1a4537;
+}
+
+.success-banner-action:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .merge-grid {
@@ -753,6 +816,46 @@ button.ghost {
 
 .topbar-meta {
   flex: none;
+}
+
+.topbar-stats {
+  color: #6b6358;
+  font-size: 0.85rem;
+}
+
+.topbar-success {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.35rem 0.75rem;
+  background: #d4e8da;
+  border: 1px solid #8fc4a0;
+  border-radius: 6px;
+  color: #245c4a;
+  font-weight: 500;
+  font-size: 0.85rem;
+  margin-left: 0.5rem;
+}
+
+.topbar-success-action {
+  background: #245c4a;
+  color: #fff;
+  border: none;
+  padding: 0.3rem 0.7rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.topbar-success-action:hover:not(:disabled) {
+  background: #1a4537;
+}
+
+.topbar-success-action:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .topbar-main .muted,

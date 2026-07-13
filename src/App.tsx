@@ -7,6 +7,7 @@ import {
   type RefObject,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { confirm } from "@tauri-apps/plugin-dialog";
 import {
   buildRenderTokens,
   type DiffToken,
@@ -759,15 +760,22 @@ function App() {
         return;
       }
 
+      // 按文件名字母排序
+      const sortedFiles = [...workspace.files].sort((a, b) => {
+        const nameA = a.fileName || fileNameOf(a.path);
+        const nameB = b.fileName || fileNameOf(b.path);
+        return nameA.localeCompare(nameB);
+      });
+
       const selectedPath =
         preferredPath &&
-        workspace.files.some((file) => file.path === preferredPath)
+        sortedFiles.some((file) => file.path === preferredPath)
           ? preferredPath
-          : workspace.files[0].path;
+          : sortedFiles[0].path;
 
       setView({
         kind: "conflicts",
-        workspace,
+        workspace: { ...workspace, files: sortedFiles },
         selectedPath,
         busy: false,
         actionError: null,
@@ -1067,13 +1075,19 @@ function MergeScreen({
     emptyPaneHighlights,
   );
   const [undoStack, setUndoStack] = useState<MergeUndoEntry[]>([]);
-  const unresolved = session
+  const unresolvedConflicts = session
     ? session.conflicts.filter(
         (conflict) => !isResolutionComplete(conflict.resolution, conflict),
-      ).length
-    : 0;
-  const canSave = session !== null && session.conflicts.length > 0 && unresolved === 0;
+      )
+    : [];
+  const unresolvedChanges = unresolvedConflicts.filter((conflict) =>
+    isChangeBlock(conflict)
+  ).length;
+  const unresolvedConflictBlocks = unresolvedConflicts.length - unresolvedChanges;
+  const canSave = session !== null && session.conflicts.length > 0 && unresolvedConflicts.length === 0;
   const canUndo = undoStack.length > 0;
+  const canGoPrev = hasUnresolvedInDirection(-1);
+  const canGoNext = hasUnresolvedInDirection(1);
 
   const oursLabel = session?.document.labels.ours ?? workspace.oursLabel;
   const theirsLabel = session?.document.labels.theirs ?? workspace.theirsLabel;
@@ -1173,14 +1187,53 @@ function MergeScreen({
     );
   }
 
+  function hasUnresolvedInDirection(direction: number): boolean {
+    if (!session || session.conflicts.length === 0) {
+      return false;
+    }
+
+    const delta = direction > 0 ? 1 : -1;
+    const start = session.activeConflict;
+    let current = start + delta;
+
+    // 不循环，只在指定方向上查找
+    while (current >= 0 && current < session.conflicts.length) {
+      const conflict = session.conflicts[current];
+      const resolution = session.resolutions[current] ?? emptyResolution();
+
+      if (conflict && !isResolutionComplete(resolution, conflict)) {
+        return true;
+      }
+
+      current += delta;
+    }
+
+    return false;
+  }
+
   function goConflict(delta: number) {
     if (!session || session.conflicts.length === 0) {
       return;
     }
-    const next =
-      (session.activeConflict + delta + session.conflicts.length) %
-      session.conflicts.length;
-    updateSession({ ...session, activeConflict: next });
+
+    const direction = delta > 0 ? 1 : -1;
+    let current = session.activeConflict + direction;
+
+    // 不循环，只在指定方向上查找
+    while (current >= 0 && current < session.conflicts.length) {
+      const conflict = session.conflicts[current];
+      const resolution = session.resolutions[current] ?? emptyResolution();
+
+      // 找到第一个未完全解决的冲突块
+      if (conflict && !isResolutionComplete(resolution, conflict)) {
+        updateSession({ ...session, activeConflict: current });
+        return;
+      }
+
+      current += direction;
+    }
+
+    // 到达边界或所有冲突都已解决，保持在当前位置
   }
 
   function setActiveConflict(index: number) {
@@ -1190,8 +1243,88 @@ function MergeScreen({
     updateSession({ ...session, activeConflict: index });
   }
 
+  async function acceptAllSide(side: "ours" | "theirs") {
+    if (!session || session.conflicts.length === 0) {
+      return;
+    }
+
+    const sideLabel = side === "ours" ? oursLabel : theirsLabel;
+    const confirmed = await confirm(
+      `这将对当前文件的 ${session.conflicts.length} 个冲突块全部使用 ${sideLabel} 的内容。`,
+      {
+        title: `确认要全部接受 ${sideLabel} 吗？`,
+        kind: "warning",
+        okLabel: "确认",
+        cancelLabel: "取消",
+      }
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    pushUndoSnapshot();
+
+    // 对所有冲突块应用决策
+    const resolutions = session.conflicts.map(() =>
+      applyAccept(emptyResolution(), side)
+    );
+
+    const updatedSession = rebuildSession(
+      session.document,
+      resolutions,
+      session.activeConflict,
+      true
+    );
+
+    updateSession(updatedSession);
+
+    // 自动保存并返回列表
+    onChangeView({ ...view, session: updatedSession, saving: true, saveError: null });
+    try {
+      const endsWithNewline = updatedSession.document.working.endsWith("\n");
+      const result = serializeResult(updatedSession.resultLines, endsWithNewline);
+      await invoke("save_merge_result", {
+        path: updatedSession.document.path,
+        result,
+        stage: true,
+      });
+      onSaved();
+    } catch (error) {
+      onChangeView({
+        ...view,
+        session: updatedSession,
+        saving: false,
+        saveError: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   async function saveFile() {
     if (!session || !canSave) {
+      return;
+    }
+    onChangeView({ ...view, saving: true, saveError: null });
+    try {
+      const endsWithNewline = session.document.working.endsWith("\n");
+      const result = serializeResult(session.resultLines, endsWithNewline);
+      await invoke("save_merge_result", {
+        path: session.document.path,
+        result,
+        stage: true,
+      });
+      onSaved();
+    } catch (error) {
+      onChangeView({
+        ...view,
+        saving: false,
+        saveError: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  async function handleSaveAndFinish() {
+    if (!session) {
       return;
     }
     onChangeView({ ...view, saving: true, saveError: null });
@@ -1221,13 +1354,20 @@ function MergeScreen({
     if (!region || !scrollRef.current) {
       return;
     }
-    const panes = scrollRef.current.querySelectorAll(".merge-pane");
+
+    // 三栏都滚动到激活的冲突块
+    const panes = [
+      scrollRef.current.querySelector(".pane-ours"),
+      scrollRef.current.querySelector(".pane-result"),
+      scrollRef.current.querySelector(".pane-theirs"),
+    ];
+
     panes.forEach((pane) => {
       if (!(pane instanceof HTMLElement)) {
         return;
       }
       const target = pane.querySelector(
-        `[data-row-index="${region.rowStart}"]`,
+        `[data-conflict-index="${region.index}"]`,
       );
       if (!(target instanceof HTMLElement)) {
         return;
@@ -1387,8 +1527,33 @@ function MergeScreen({
           <button type="button" className="ghost" onClick={onBack}>
             ← Conflicts
           </button>
-          <strong>{fileNameOf(view.selectedPath)}</strong>
-          <span className="muted">{view.selectedPath}</span>
+          {session ? (
+            <>
+              <span className="muted">{session.document.path}</span>
+              <span className="topbar-stats">
+                {unresolvedChanges === 0
+                  ? "No changes"
+                  : `${unresolvedChanges} change${unresolvedChanges !== 1 ? "s" : ""}`}
+                {" · "}
+                {unresolvedConflictBlocks === 0
+                  ? "No conflicts"
+                  : `${unresolvedConflictBlocks} conflict${unresolvedConflictBlocks !== 1 ? "s" : ""}`}
+              </span>
+            </>
+          ) : null}
+          {session && unresolvedConflicts.length === 0 && session.conflicts.length > 0 ? (
+            <span className="topbar-success">
+              ✓ All changes have been processed
+              <button
+                type="button"
+                className="topbar-success-action"
+                onClick={handleSaveAndFinish}
+                disabled={view.saving}
+              >
+                保存改动并完成合并
+              </button>
+            </span>
+          ) : null}
         </div>
         <div className="topbar-meta">
           {oursLabel} ← {theirsLabel}
@@ -1426,34 +1591,22 @@ function MergeScreen({
               <div className="bottombar-actions bottombar-actions-left">
                 <button
                   type="button"
-                  disabled={session.activeConflict < 0}
-                  onClick={() => setDecision("ours")}
+                  disabled={session.conflicts.length === 0 || view.saving}
+                  onClick={() => void acceptAllSide("ours")}
                 >
                   Accept Left
                 </button>
                 <button
                   type="button"
-                  disabled={session.activeConflict < 0}
-                  onClick={() => setDecision("theirs")}
+                  disabled={session.conflicts.length === 0 || view.saving}
+                  onClick={() => void acceptAllSide("theirs")}
                 >
                   Accept Right
                 </button>
               </div>
               <div className="bottombar-status">
-                {session.document.path}
-                {session.conflicts.length > 0 ? (
-                  <>
-                    {" · "}
-                    Conflict {session.activeConflict + 1}/
-                    {session.conflicts.length}
-                    {" · "}
-                    unresolved {unresolved}
-                  </>
-                ) : (
-                  " · 无冲突块"
-                )}
                 {view.saveError ? (
-                  <span className="error"> · {view.saveError}</span>
+                  <span className="error">{view.saveError}</span>
                 ) : null}
               </div>
               <div className="bottombar-actions">
@@ -1477,7 +1630,7 @@ function MergeScreen({
                 <button
                   type="button"
                   className="ghost"
-                  disabled={!session.conflicts.length}
+                  disabled={!canGoPrev}
                   onClick={() => goConflict(-1)}
                 >
                   上一块
@@ -1485,7 +1638,7 @@ function MergeScreen({
                 <button
                   type="button"
                   className="ghost"
-                  disabled={!session.conflicts.length}
+                  disabled={!canGoNext}
                   onClick={() => goConflict(1)}
                 >
                   下一块
@@ -1613,6 +1766,137 @@ function resultRibbonSpan(
   // 与 .is-result-strip::before 的 5px 细条对齐
   const half = Math.max(2, Math.min(lineHeight * 0.18, 2.5));
   return { top: mid - half, bottom: mid + half };
+}
+
+type PaneScrollRef = RefObject<HTMLDivElement | null>;
+
+/**
+ * 任一栏纵向滚动时，按共享 row-index（连接带两端同一冲突行）同步其余两栏，
+ * 使冲突连接线在滚动中保持水平对齐。
+ */
+function useLinkedPaneScroll(
+  oursPaneRef: PaneScrollRef,
+  resultPaneRef: PaneScrollRef,
+  theirsPaneRef: PaneScrollRef,
+  layoutEpoch: number,
+) {
+  useEffect(() => {
+    const panes = [oursPaneRef.current, resultPaneRef.current, theirsPaneRef.current].filter(
+      (el): el is HTMLDivElement => el instanceof HTMLDivElement,
+    );
+    if (panes.length < 2) {
+      return;
+    }
+
+    let syncing = false;
+    let raf = 0;
+    let leader: HTMLDivElement | null = null;
+
+    const cellContentTop = (pane: HTMLElement, cell: HTMLElement) =>
+      cell.getBoundingClientRect().top -
+      pane.getBoundingClientRect().top +
+      pane.scrollTop;
+
+    const findAnchor = (
+      pane: HTMLDivElement,
+    ): { rowIndex: number; offsetInViewport: number } | null => {
+      const lines = pane.querySelector(".merge-pane-lines");
+      if (!(lines instanceof HTMLElement) || lines.children.length === 0) {
+        return null;
+      }
+      const children = lines.children;
+      const probe = pane.scrollTop + Math.min(48, pane.clientHeight * 0.25);
+      let lo = 0;
+      let hi = children.length - 1;
+      let ans = children.length - 1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        const el = children[mid];
+        if (!(el instanceof HTMLElement)) {
+          break;
+        }
+        const top = cellContentTop(pane, el);
+        if (top + el.offsetHeight > probe) {
+          ans = mid;
+          hi = mid - 1;
+        } else {
+          lo = mid + 1;
+        }
+      }
+      const cell = children[ans];
+      if (!(cell instanceof HTMLElement)) {
+        return null;
+      }
+      const rowIndex = Number(cell.getAttribute("data-row-index"));
+      if (Number.isNaN(rowIndex)) {
+        return null;
+      }
+      return {
+        rowIndex,
+        offsetInViewport: cellContentTop(pane, cell) - pane.scrollTop,
+      };
+    };
+
+    const syncFrom = (source: HTMLDivElement) => {
+      const anchor = findAnchor(source);
+      if (!anchor) {
+        return;
+      }
+      syncing = true;
+      for (const pane of panes) {
+        if (pane === source) {
+          continue;
+        }
+        const cell = pane.querySelector<HTMLElement>(
+          `[data-row-index="${anchor.rowIndex}"]`,
+        );
+        if (!cell) {
+          continue;
+        }
+        const nextTop = cellContentTop(pane, cell) - anchor.offsetInViewport;
+        const maxTop = Math.max(0, pane.scrollHeight - pane.clientHeight);
+        const clamped = Math.max(0, Math.min(maxTop, nextTop));
+        if (Math.abs(pane.scrollTop - clamped) > 0.5) {
+          pane.scrollTop = clamped;
+        }
+      }
+      requestAnimationFrame(() => {
+        syncing = false;
+        leader = null;
+      });
+    };
+
+    const onScroll = (event: Event) => {
+      const source = event.currentTarget;
+      if (!(source instanceof HTMLDivElement) || syncing) {
+        return;
+      }
+      if (leader && leader !== source) {
+        return;
+      }
+      leader = source;
+      if (raf) {
+        cancelAnimationFrame(raf);
+      }
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        syncFrom(source);
+      });
+    };
+
+    for (const pane of panes) {
+      pane.addEventListener("scroll", onScroll, { passive: true });
+    }
+
+    return () => {
+      if (raf) {
+        cancelAnimationFrame(raf);
+      }
+      for (const pane of panes) {
+        pane.removeEventListener("scroll", onScroll);
+      }
+    };
+  }, [layoutEpoch, oursPaneRef, resultPaneRef, theirsPaneRef]);
 }
 
 type ConflictLinkGeometry = {
@@ -1849,6 +2133,9 @@ function MergeGrid({
   useLayoutEffect(() => {
     setPaneEpoch((value) => value + 1);
   }, [rows, conflicts]);
+
+  // 三栏按同一 data-row-index / 冲突连接带对齐纵向滚动
+  useLinkedPaneScroll(oursPaneRef, resultPaneRef, theirsPaneRef, paneEpoch);
 
   const actionRowByConflict = useMemo(() => {
     const map = new Map<number, number>();
