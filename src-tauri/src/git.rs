@@ -90,6 +90,21 @@ pub fn enforce_cli_repo_gate() {
     }
 }
 
+/// Get the current branch name for the given repository.
+pub fn get_current_branch(repo_root: &Path) -> Result<String, String> {
+    let output = Command::new("git")
+        .args(["-C", &repo_root.to_string_lossy(), "rev-parse", "--abbrev-ref", "HEAD"])
+        .output()
+        .map_err(|e| format!("无法执行 git 命令: {}", e))?;
+
+    if output.status.success() {
+        let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        Ok(branch)
+    } else {
+        Err("无法获取当前分支".to_string())
+    }
+}
+
 #[cfg(windows)]
 fn attach_cli_console() {
     // Release builds use the Windows subsystem (no console). Re-attach to the

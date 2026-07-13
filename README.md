@@ -57,6 +57,28 @@ export PATH="$HOME/.local/bin:$PATH"
 bun run tauri:build
 ```
 
+## 发布
+
+项目只发布桌面端应用。发布自动化由 GitHub Actions 完成：
+
+- `CI`：在 `main`、`feat/tauri-desktop` 和 PR 上运行前端构建与 Tauri 后端检查。
+- `Release Please`：合并到 `main` 后，根据 Conventional Commits 自动创建发布 PR，维护版本号和 `CHANGELOG.md`。
+- `Publish desktop release`：推送 `v*` tag 或手动触发时，构建 macOS、Windows、Linux 桌面安装包并上传到 GitHub Release。
+
+日常提交请使用 Conventional Commits：
+
+```bash
+git commit -m "feat: 支持新的合并能力"
+git commit -m "fix: 修复冲突解析问题"
+```
+
+首版或手动发布可推送 tag：
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
 ## 推荐 IDE
 
 - [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-analyzer.rust-analyzer)

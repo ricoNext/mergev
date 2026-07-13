@@ -18,6 +18,7 @@ pub struct WorkspaceSnapshot {
     pub headline: String,
     pub files: Vec<ConflictFileSummary>,
     pub total_blocks: usize,
+    pub is_cli_launch: bool,  // 新增：标识是否通过 CLI 启动
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -36,7 +37,6 @@ pub struct ConflictFileSummary {
 #[serde(rename_all = "camelCase")]
 pub enum SideStatus {
     Modified,
-    Added,
     Deleted,
 }
 
@@ -209,6 +209,7 @@ pub fn load_workspace(cwd: &Path) -> Result<WorkspaceSnapshot, String> {
         headline,
         files,
         total_blocks,
+        is_cli_launch: false,  // 默认值，由调用方设置
     })
 }
 
@@ -1553,8 +1554,10 @@ fn list_conflict_files(root: &Path) -> Result<Vec<ConflictFileSummary>, String> 
             file_name,
             directory,
             conflict_count,
-            ours_status: side_status(stages.has_base, stages.has_ours),
-            theirs_status: side_status(stages.has_base, stages.has_theirs),
+            // Align with WebStorm: stage present → Modified, missing → Deleted.
+            // Base (stage 1) is not used to distinguish Added vs Modified.
+            ours_status: side_status(stages.has_ours),
+            theirs_status: side_status(stages.has_theirs),
             staged: false,
         });
     }
@@ -1563,7 +1566,6 @@ fn list_conflict_files(root: &Path) -> Result<Vec<ConflictFileSummary>, String> 
 
 #[derive(Debug, Clone, Copy, Default)]
 struct StageFlags {
-    has_base: bool,
     has_ours: bool,
     has_theirs: bool,
 }
@@ -1581,7 +1583,6 @@ fn unmerged_stage_map(
         let stage = meta.split_whitespace().nth(2).unwrap_or("0");
         let entry = map.entry(path.to_string()).or_insert(StageFlags::default());
         match stage {
-            "1" => entry.has_base = true,
             "2" => entry.has_ours = true,
             "3" => entry.has_theirs = true,
             _ => {}
@@ -1590,11 +1591,11 @@ fn unmerged_stage_map(
     Ok(map)
 }
 
-fn side_status(has_base: bool, has_side: bool) -> SideStatus {
-    match (has_base, has_side) {
-        (true, true) => SideStatus::Modified,
-        (false, true) => SideStatus::Added,
-        (_, false) => SideStatus::Deleted,
+fn side_status(has_side: bool) -> SideStatus {
+    if has_side {
+        SideStatus::Modified
+    } else {
+        SideStatus::Deleted
     }
 }
 

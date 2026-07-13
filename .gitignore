@@ -43,6 +43,10 @@ dist
 dist-ssr
 *.local
 
+# Tauri mobile icon outputs are not used by this desktop-only app
+src-tauri/icons/android/
+src-tauri/icons/ios/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="190" y1="110" x2="830" y2="900" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#31836d"/>
+      <stop offset="1" stop-color="#17483d"/>
+    </linearGradient>
+    <filter id="outerShadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="26" stdDeviation="25" flood-color="#1c1917" flood-opacity=".28"/>
+    </filter>
+    <filter id="softShadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="10" stdDeviation="9" flood-color="#0f2f28" flood-opacity=".34"/>
+    </filter>
+    <marker id="arrowGreen" markerWidth="6.5" markerHeight="6.5" refX="5.8" refY="3.25" orient="auto" markerUnits="strokeWidth">
+      <path d="M0 0 6.5 3.25 0 6.5Z" fill="#2e8a70"/>
+    </marker>
+    <marker id="arrowRed" markerWidth="6.5" markerHeight="6.5" refX="5.8" refY="3.25" orient="auto" markerUnits="strokeWidth">
+      <path d="M0 0 6.5 3.25 0 6.5Z" fill="#d98278"/>
+    </marker>
+  </defs>
+
+  <rect width="1024" height="1024" fill="transparent"/>
+  <rect x="56" y="56" width="912" height="912" rx="232" fill="#fffaf3" filter="url(#outerShadow)"/>
+  <rect x="86" y="86" width="852" height="852" rx="204" fill="url(#bg)"/>
+
+  <g stroke-linecap="round" stroke-linejoin="round">
+    <rect x="172" y="205" width="207" height="615" rx="36" fill="#e7e5dc" fill-opacity=".92" stroke="#0f2f28" stroke-opacity=".2" stroke-width="5"/>
+    <rect x="409" y="205" width="207" height="615" rx="36" fill="#f8f4ee" fill-opacity=".98" stroke="#0f2f28" stroke-opacity=".2" stroke-width="5"/>
+    <rect x="645" y="205" width="207" height="615" rx="36" fill="#e7e5dc" fill-opacity=".92" stroke="#0f2f28" stroke-opacity=".2" stroke-width="5"/>
+
+    <g stroke-width="15">
+      <path d="M198 263H352" stroke="#726e66" stroke-opacity=".68"/>
+      <path d="M215 319H334" stroke="#b84f48"/>
+      <path d="M198 375H352" stroke="#726e66" stroke-opacity=".68"/>
+      <path d="M215 431H334" stroke="#287965"/>
+      <path d="M198 487H352" stroke="#726e66" stroke-opacity=".68"/>
+
+      <path d="M445 263H579" stroke="#726e66" stroke-opacity=".68"/>
+      <path d="M428 319H597" stroke="#726e66" stroke-opacity=".68"/>
+      <path d="M445 375H579" stroke="#726e66" stroke-opacity=".68"/>
+      <path d="M428 431H597" stroke="#287965"/>
+      <path d="M445 487H579" stroke="#726e66" stroke-opacity=".68"/>
+
+      <path d="M672 263H826" stroke="#726e66" stroke-opacity=".68"/>
+      <path d="M689 319H808" stroke="#b84f48"/>
+      <path d="M672 375H826" stroke="#726e66" stroke-opacity=".68"/>
+      <path d="M689 431H808" stroke="#287965"/>
+      <path d="M672 487H826" stroke="#726e66" stroke-opacity=".68"/>
+    </g>
+
+    <path d="M369 430H456" stroke="#2e8a70" stroke-width="13" stroke-opacity=".9" fill="none" marker-end="url(#arrowGreen)"/>
+    <path d="M655 430H568" stroke="#d98278" stroke-width="13" stroke-opacity=".86" fill="none" marker-end="url(#arrowRed)"/>
+
+    <circle cx="512" cy="628" r="88" fill="#3c987a" filter="url(#softShadow)"/>
+    <path d="M467 630 506 670 557 587" stroke="#fffaf3" stroke-width="26" fill="none"/>
+  </g>
+</svg>

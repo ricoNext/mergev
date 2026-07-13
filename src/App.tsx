@@ -22,6 +22,7 @@ import {
   languageFromPath,
   type PaneHighlights,
 } from "./syntaxHighlight";
+import { FirstLaunchDialog } from "./FirstLaunchDialog";
 import "./App.css";
 
 type GitOperation = "none" | "merge" | "rebase" | "cherryPick" | "revert";
@@ -39,7 +40,7 @@ type ConflictResolution = {
   theirs: SideVerdict;
   acceptOrder: Array<"ours" | "theirs">;
 };
-type SideStatus = "modified" | "added" | "deleted";
+type SideStatus = "modified" | "deleted";
 type MergeRowKind = "context" | "conflict" | "insert" | "delete" | "empty";
 type ResultSource =
   | "context"
@@ -134,14 +135,32 @@ type MergeUndoEntry = {
   dirty: boolean;
 };
 
+type RepositoryItem = {
+  path: string;
+  name: string;
+  lastOpened: string;
+  branch?: string;
+  hasConflicts?: boolean;
+};
+
 type AppView =
   | { kind: "loading" }
   | { kind: "error"; message: string }
+  | { kind: "repositories"; repos: RepositoryItem[] }
   | { kind: "empty"; workspace: WorkspaceSnapshot }
   | {
       kind: "conflicts";
       workspace: WorkspaceSnapshot;
       selectedPath: string;
+      busy: boolean;
+      actionError: string | null;
+    }
+  | {
+      kind: "combined";
+      repos: RepositoryItem[];
+      activeRepoPath: string | null;
+      workspace: WorkspaceSnapshot | null;
+      selectedFilePath: string | null;
       busy: boolean;
       actionError: string | null;
     }
@@ -157,7 +176,6 @@ type AppView =
 
 const SIDE_STATUS_LABEL: Record<SideStatus, string> = {
   modified: "Modified",
-  added: "Added",
   deleted: "Deleted",
 };
 
@@ -169,6 +187,117 @@ function fileNameOf(path: string): string {
 function dirOf(path: string): string {
   const index = path.lastIndexOf("/");
   return index >= 0 ? path.slice(0, index) : "";
+}
+
+const REPO_AVATAR_COLORS = [
+  "#4e9a51",
+  "#2aa198",
+  "#d33682",
+  "#6c71c4",
+  "#268bd2",
+  "#c678dd",
+  "#e5a03c",
+];
+
+function hashString(value: string): number {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash * 31 + value.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash);
+}
+
+function getRepoInitials(name: string): string {
+  const parts = name.split(/[-_\s.]+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return parts
+      .slice(0, 2)
+      .map((part) => part[0])
+      .join("")
+      .toUpperCase();
+  }
+  const word = parts[0] || name;
+  return word.length <= 3 ? word[0].toUpperCase() : word.slice(0, 2).toUpperCase();
+}
+
+function getRepoAvatarColor(name: string): string {
+  return REPO_AVATAR_COLORS[hashString(name) % REPO_AVATAR_COLORS.length];
+}
+
+function formatDisplayPath(path: string, homeDir?: string | null): string {
+  if (homeDir && path.startsWith(homeDir)) {
+    return `~${path.slice(homeDir.length)}`;
+  }
+  const match = path.match(/^(\/Users\/[^/]+|\/home\/[^/]+)(\/.*)?$/);
+  if (match) {
+    return `~${match[2] || ""}`;
+  }
+  return path;
+}
+
+function GitBranchIcon() {
+  return (
+    <svg
+      className="repository-branch-icon"
+      width="12"
+      height="12"
+      viewBox="0 0 16 16"
+      aria-hidden="true"
+    >
+      <circle cx="4.5" cy="3.5" r="1.75" fill="currentColor" />
+      <circle cx="4.5" cy="12.5" r="1.75" fill="currentColor" />
+      <circle cx="11.5" cy="7.5" r="1.75" fill="currentColor" />
+      <path
+        d="M4.5 5.25v4.5M4.5 7.5h5.5"
+        stroke="currentColor"
+        strokeWidth="1.25"
+        fill="none"
+      />
+    </svg>
+  );
+}
+
+function RepositoryAvatar({ name }: { name: string }) {
+  return (
+    <div
+      className="repository-avatar"
+      style={{ backgroundColor: getRepoAvatarColor(name) }}
+      aria-hidden="true"
+    >
+      {getRepoInitials(name)}
+    </div>
+  );
+}
+
+function RepositoryListContent({
+  repo,
+  homeDir,
+}: {
+  repo: RepositoryItem;
+  homeDir?: string | null;
+}) {
+  return (
+    <>
+      <RepositoryAvatar name={repo.name} />
+      <div className="repository-details">
+        <div className="repository-name-row">
+          <span className="repository-name">{repo.name}</span>
+          {repo.hasConflicts ? (
+            <span className="repository-conflict-dot" title="有冲突" />
+          ) : null}
+        </div>
+        <span className="repository-path">
+          {formatDisplayPath(repo.path, homeDir)}
+        </span>
+        {repo.branch ? (
+          <span className="repository-branch-row">
+            <GitBranchIcon />
+            <span className="repository-branch">{repo.branch}</span>
+          </span>
+        ) : null}
+      </div>
+    </>
+  );
 }
 
 function splitLines(text: string): string[] {
@@ -750,6 +879,151 @@ function nextUnresolvedIndex(
 
 function App() {
   const [view, setView] = useState<AppView>({ kind: "loading" });
+  const [showFirstLaunchDialog, setShowFirstLaunchDialog] = useState(false);
+
+  async function checkFirstLaunch() {
+    try {
+      const isFirstLaunch = await invoke<boolean>("is_first_launch");
+      setShowFirstLaunchDialog(isFirstLaunch);
+    } catch (error) {
+      console.error("Failed to check first launch:", error);
+      setShowFirstLaunchDialog(false);
+    }
+  }
+
+  async function loadInitial() {
+    setView({ kind: "loading" });
+    try {
+      // 判断激活仓库：MERGEV_CWD > 第一个仓库
+      let activeRepoPath: string | null = null;
+      const mergev_cwd = await invoke<string | null>("get_mergev_cwd");
+
+      if (mergev_cwd) {
+        // 有 MERGEV_CWD 环境变量，直接使用它（CLI 启动场景）
+        activeRepoPath = mergev_cwd;
+      }
+
+      // 如果有激活仓库，加载其冲突列表
+      let workspace: WorkspaceSnapshot | null = null;
+      if (activeRepoPath) {
+        try {
+          await invoke("open_repository", { path: activeRepoPath });
+          workspace = await invoke<WorkspaceSnapshot>("get_workspace");
+
+          // 按文件名字母排序
+          if (workspace.files.length > 0) {
+            const sortedFiles = [...workspace.files].sort((a, b) => {
+              const nameA = a.fileName || fileNameOf(a.path);
+              const nameB = b.fileName || fileNameOf(b.path);
+              return nameA.localeCompare(nameB);
+            });
+            workspace = { ...workspace, files: sortedFiles };
+          }
+        } catch (error) {
+          console.error("Failed to load repository:", error);
+          workspace = null;
+        }
+      }
+
+      // 加载仓库列表（在 open_repository 之后，确保新仓库已加入历史）
+      const repos = await invoke<RepositoryItem[]>("get_recent_repositories");
+
+      // 如果没有 MERGEV_CWD，使用最近打开的仓库
+      if (!activeRepoPath && repos.length > 0) {
+        activeRepoPath = repos[0].path;
+        try {
+          await invoke("open_repository", { path: activeRepoPath });
+          workspace = await invoke<WorkspaceSnapshot>("get_workspace");
+
+          if (workspace.files.length > 0) {
+            const sortedFiles = [...workspace.files].sort((a, b) => {
+              const nameA = a.fileName || fileNameOf(a.path);
+              const nameB = b.fileName || fileNameOf(b.path);
+              return nameA.localeCompare(nameB);
+            });
+            workspace = { ...workspace, files: sortedFiles };
+          }
+        } catch (error) {
+          console.error("Failed to load repository:", error);
+          workspace = null;
+        }
+      }
+
+      const selectedFilePath = workspace?.files && workspace.files.length > 0
+        ? workspace.files[0].path
+        : null;
+
+      setView({
+        kind: "combined",
+        repos,
+        activeRepoPath,
+        workspace,
+        selectedFilePath,
+        busy: false,
+        actionError: null,
+      });
+    } catch (error) {
+      setView({
+        kind: "error",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  async function removeRepository(repoPath: string) {
+    const confirmed = await confirm(
+      "此操作只会从历史列表中移除该仓库，不会删除仓库本身。",
+      {
+        title: "确认从列表中移除",
+        kind: "warning",
+        okLabel: "移除",
+        cancelLabel: "取消",
+      }
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      await invoke("remove_repository", { path: repoPath });
+      await loadInitial();
+    } catch (error) {
+      console.error("Failed to remove repository:", error);
+    }
+  }
+
+  async function addRepository() {
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: "选择 Git 仓库目录",
+      });
+
+      if (!selected || Array.isArray(selected)) {
+        return;
+      }
+
+      const path = selected;
+
+      try {
+        await invoke("open_repository", { path });
+        await loadInitial();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await confirm(message, {
+          title: "添加仓库失败",
+          kind: "error",
+          okLabel: "确定",
+          cancelLabel: "",
+        });
+      }
+    } catch (error) {
+      console.error("Failed to add repository:", error);
+    }
+  }
 
   async function loadConflicts(preferredPath?: string) {
     setView({ kind: "loading" });
@@ -786,6 +1060,65 @@ function App() {
         message: error instanceof Error ? error.message : String(error),
       });
     }
+  }
+
+  async function switchRepository(repoPath: string) {
+    if (view.kind !== "combined") {
+      return;
+    }
+
+    setView({ ...view, activeRepoPath: repoPath, busy: true, actionError: null });
+
+    try {
+      await invoke("open_repository", { path: repoPath });
+      const workspace = await invoke<WorkspaceSnapshot>("get_workspace");
+
+      // 按文件名字母排序
+      const sortedFiles = workspace.files.length > 0
+        ? [...workspace.files].sort((a, b) => {
+            const nameA = a.fileName || fileNameOf(a.path);
+            const nameB = b.fileName || fileNameOf(b.path);
+            return nameA.localeCompare(nameB);
+          })
+        : [];
+
+      const selectedFilePath = sortedFiles.length > 0 ? sortedFiles[0].path : null;
+
+      setView({
+        ...view,
+        activeRepoPath: repoPath,
+        workspace: { ...workspace, files: sortedFiles },
+        selectedFilePath,
+        busy: false,
+        actionError: null,
+      });
+    } catch (error) {
+      setView({
+        ...view,
+        busy: false,
+        actionError: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  async function openRepository(repoPath: string) {
+    setView({ kind: "loading" });
+    try {
+      await invoke("open_repository", { path: repoPath });
+      await loadConflicts();
+    } catch (error) {
+      setView({
+        kind: "error",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  async function openMergeFromCombined(path: string) {
+    if (view.kind !== "combined" || !view.workspace) {
+      return;
+    }
+    await openMerge(path, view.workspace);
   }
 
   async function openMerge(path: string, workspace: WorkspaceSnapshot) {
@@ -826,8 +1159,19 @@ function App() {
   }
 
   useEffect(() => {
-    void loadConflicts();
+    void checkFirstLaunch();
+    void loadInitial();
   }, []);
+
+  if (showFirstLaunchDialog) {
+    return (
+      <FirstLaunchDialog
+        onClose={() => {
+          setShowFirstLaunchDialog(false);
+        }}
+      />
+    );
+  }
 
   if (view.kind === "loading") {
     return (
@@ -846,6 +1190,17 @@ function App() {
           重试
         </button>
       </main>
+    );
+  }
+
+  if (view.kind === "repositories") {
+    return (
+      <RepositoriesScreen
+        view={view}
+        onOpenRepository={(path) => void openRepository(path)}
+        onRefresh={() => void loadInitial()}
+        onClose={() => void invoke("close_app")}
+      />
     );
   }
 
@@ -868,6 +1223,67 @@ function App() {
     );
   }
 
+  if (view.kind === "combined") {
+    return (
+      <CombinedScreen
+        view={view}
+        onSelectRepository={(path) => void switchRepository(path)}
+        onSelectFile={(path) =>
+          setView({ ...view, selectedFilePath: path, actionError: null })
+        }
+        onRefresh={() => void loadInitial()}
+        onRemoveRepository={(path) => void removeRepository(path)}
+        onAddRepository={() => void addRepository()}
+        onAccept={async (side) => {
+          if (!view.workspace || !view.selectedFilePath) {
+            return;
+          }
+          setView({ ...view, busy: true, actionError: null });
+          try {
+            const document = await invoke<MergeDocument>("get_merge_document", {
+              path: view.selectedFilePath,
+            });
+            const session = buildSessionFromDocument(document);
+
+            const resolutions = session.conflicts.map(() =>
+              applyAccept(emptyResolution(), side),
+            );
+
+            const updatedSession = rebuildSession(
+              session.document,
+              resolutions,
+              session.activeConflict,
+              true,
+            );
+
+            const endsWithNewline = updatedSession.document.working.endsWith("\n");
+            const result = serializeResult(
+              updatedSession.resultLines,
+              endsWithNewline,
+            );
+            await invoke("save_merge_result", {
+              path: updatedSession.document.path,
+              result,
+              stage: true,
+            });
+
+            await switchRepository(view.activeRepoPath!);
+          } catch (error) {
+            setView({
+              ...view,
+              busy: false,
+              actionError:
+                error instanceof Error ? error.message : String(error),
+            });
+          }
+        }}
+        onMerge={() => void openMergeFromCombined(view.selectedFilePath!)}
+        onOpenPath={(path) => void openMergeFromCombined(path)}
+        onClose={() => void invoke("close_app")}
+      />
+    );
+  }
+
   if (view.kind === "conflicts") {
     return (
       <ConflictsScreen
@@ -879,10 +1295,37 @@ function App() {
         onAccept={async (side) => {
           setView({ ...view, busy: true, actionError: null });
           try {
-            await invoke("accept_file_side", {
+            // 1. 加载合并文档
+            const document = await invoke<MergeDocument>("get_merge_document", {
               path: view.selectedPath,
-              side,
             });
+            const session = buildSessionFromDocument(document);
+
+            // 2. 对所有冲突块应用该侧的决策
+            const resolutions = session.conflicts.map(() =>
+              applyAccept(emptyResolution(), side),
+            );
+
+            const updatedSession = rebuildSession(
+              session.document,
+              resolutions,
+              session.activeConflict,
+              true,
+            );
+
+            // 3. 保存合并结果
+            const endsWithNewline = updatedSession.document.working.endsWith("\n");
+            const result = serializeResult(
+              updatedSession.resultLines,
+              endsWithNewline,
+            );
+            await invoke("save_merge_result", {
+              path: updatedSession.document.path,
+              result,
+              stage: true,
+            });
+
+            // 4. 刷新列表
             await loadConflicts();
           } catch (error) {
             setView({
@@ -903,10 +1346,333 @@ function App() {
   return (
     <MergeScreen
       view={view}
-      onBack={() => void loadConflicts(view.selectedPath)}
+      onBack={() => {
+        if (view.kind === "merge") {
+          // 尝试返回到 combined 视图
+          void loadInitial();
+        }
+      }}
       onChangeView={setView}
-      onSaved={() => void loadConflicts()}
+      onSaved={() => void loadInitial()}
     />
+  );
+}
+
+function CombinedScreen({
+  view,
+  onSelectRepository,
+  onSelectFile,
+  onRefresh,
+  onRemoveRepository,
+  onAddRepository,
+  onAccept,
+  onMerge,
+  onOpenPath,
+  onClose: _onClose,
+}: {
+  view: Extract<AppView, { kind: "combined" }>;
+  onSelectRepository: (path: string) => void;
+  onSelectFile: (path: string) => void;
+  onRefresh: () => void;
+  onRemoveRepository: (path: string) => void;
+  onAddRepository: () => void;
+  onAccept: (side: "ours" | "theirs") => Promise<void>;
+  onMerge: () => void;
+  onOpenPath: (path: string) => void;
+  onClose: () => void;
+}) {
+  const { repos, activeRepoPath, workspace, selectedFilePath, busy, actionError } = view;
+  const selectedFile = workspace?.files.find((f) => f.path === selectedFilePath);
+  const [menuOpen, setMenuOpen] = useState<string | null>(null);
+  const [homeDir, setHomeDir] = useState<string | null>(null);
+
+  useEffect(() => {
+    void import("@tauri-apps/api/path")
+      .then(({ homeDir: resolveHomeDir }) => resolveHomeDir())
+      .then(setHomeDir)
+      .catch(() => setHomeDir(null));
+  }, []);
+
+  useEffect(() => {
+    const handleClick = () => setMenuOpen(null);
+    if (menuOpen) {
+      window.addEventListener("click", handleClick);
+      return () => window.removeEventListener("click", handleClick);
+    }
+  }, [menuOpen]);
+
+  return (
+    <div className="combined-view">
+      <aside className="repository-sidebar">
+        <header className="sidebar-header">
+          <h2>Repositories</h2>
+          <div className="sidebar-header-actions">
+            <button type="button" className="ghost" onClick={onAddRepository}>
+              新增项目
+            </button>
+            <button type="button" className="ghost" onClick={onRefresh}>
+              刷新
+            </button>
+          </div>
+        </header>
+        <div className="repository-list">
+          {repos.length === 0 ? (
+            <div className="empty-state">
+              <p className="muted">暂无历史仓库</p>
+            </div>
+          ) : (
+            repos.map((repo) => (
+              <div
+                key={repo.path}
+                className={
+                  repo.path === activeRepoPath
+                    ? "repository-item active"
+                    : "repository-item"
+                }
+              >
+                <div
+                  className="repository-info"
+                  onClick={() => onSelectRepository(repo.path)}
+                >
+                  <RepositoryListContent repo={repo} homeDir={homeDir} />
+                </div>
+                <div className="repository-actions">
+                  <button
+                    type="button"
+                    className="repository-menu-trigger"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setMenuOpen(menuOpen === repo.path ? null : repo.path);
+                    }}
+                  >
+                    ⋯
+                  </button>
+                  {menuOpen === repo.path && (
+                    <div className="repository-menu">
+                      <button
+                        type="button"
+                        className="repository-menu-item"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigator.clipboard.writeText(repo.path);
+                          setMenuOpen(null);
+                        }}
+                      >
+                        复制路径
+                      </button>
+                      {repo.branch && (
+                        <button
+                          type="button"
+                          className="repository-menu-item"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigator.clipboard.writeText(repo.branch!);
+                            setMenuOpen(null);
+                          }}
+                        >
+                          复制分支
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="repository-menu-item danger"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onRemoveRepository(repo.path);
+                          setMenuOpen(null);
+                        }}
+                      >
+                        从列表中移除
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </aside>
+
+      <main className="conflict-main">
+        {!workspace ? (
+          <div className="empty-state">
+            <p className="muted">选择一个仓库查看冲突文件</p>
+          </div>
+        ) : workspace.files.length === 0 ? (
+          <div className="empty-state">
+            <p className="eyebrow">Mergev</p>
+            <h1>
+              {workspace.repoName}
+              <span className="muted"> · {workspace.branch}</span>
+            </h1>
+            <p>当前没有需要解决的合并冲突。</p>
+            <p className="muted">
+              在产生冲突的 merge / rebase 后，再于仓库目录执行 mergev。
+            </p>
+          </div>
+        ) : (
+          <>
+            <header className="conflicts-header">
+              <div>
+                <h1>
+                  {workspace.repoName}
+                  <span className="muted"> · {workspace.branch}</span>
+                </h1>
+                <p className="muted">{workspace.headline}</p>
+              </div>
+            </header>
+
+            <div className="conflicts-body">
+              <div className="conflicts-table-wrap">
+                <table className="conflicts-table">
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Yours ({workspace.oursLabel})</th>
+                      <th>Theirs ({workspace.theirsLabel})</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {workspace.files.map((file) => {
+                      const name = file.fileName || fileNameOf(file.path);
+                      const directory = file.directory || dirOf(file.path);
+                      return (
+                        <tr
+                          key={file.path}
+                          className={
+                            file.path === selectedFilePath ? "selected" : undefined
+                          }
+                          onClick={() => onSelectFile(file.path)}
+                        >
+                          <td>
+                            <div className="name-cell">
+                              <span className="name-file">{name}</span>
+                              {directory ? (
+                                <span className="name-dir">{directory}</span>
+                              ) : null}
+                            </div>
+                          </td>
+                          <td>
+                            <StatusCell
+                              status={file.oursStatus}
+                              onOpen={() => onOpenPath(file.path)}
+                            />
+                          </td>
+                          <td>
+                            <StatusCell
+                              status={file.theirsStatus}
+                              onOpen={() => onOpenPath(file.path)}
+                            />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <aside className="conflicts-actions">
+                <button
+                  type="button"
+                  disabled={busy || !selectedFile}
+                  onClick={() => void onAccept("ours")}
+                >
+                  Accept Yours
+                </button>
+                <button
+                  type="button"
+                  disabled={busy || !selectedFile}
+                  onClick={() => void onAccept("theirs")}
+                >
+                  Accept Theirs
+                </button>
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={busy || !selectedFile}
+                  onClick={onMerge}
+                >
+                  Merge…
+                </button>
+                {actionError ? <p className="error">{actionError}</p> : null}
+                {selectedFile ? (
+                  <p className="muted action-hint">
+                    {selectedFile.conflictCount} conflict block
+                    {selectedFile.conflictCount === 1 ? "" : "s"}
+                  </p>
+                ) : null}
+              </aside>
+            </div>
+          </>
+        )}
+      </main>
+    </div>
+  );
+}
+
+function RepositoriesScreen({
+  view,
+  onOpenRepository,
+  onRefresh,
+  onClose,
+}: {
+  view: Extract<AppView, { kind: "repositories" }>;
+  onOpenRepository: (path: string) => void;
+  onRefresh: () => void;
+  onClose: () => void;
+}) {
+  const { repos } = view;
+  const [homeDir, setHomeDir] = useState<string | null>(null);
+
+  useEffect(() => {
+    void import("@tauri-apps/api/path")
+      .then(({ homeDir: resolveHomeDir }) => resolveHomeDir())
+      .then(setHomeDir)
+      .catch(() => setHomeDir(null));
+  }, []);
+
+  return (
+    <div className="repositories">
+      <header className="conflicts-header">
+        <div>
+          <h1>Recent Repositories</h1>
+          <p className="muted">选择一个仓库查看冲突</p>
+        </div>
+        <button type="button" className="ghost" onClick={onRefresh}>
+          刷新
+        </button>
+      </header>
+
+      <div className="repositories-body">
+        {repos.length === 0 ? (
+          <div className="repositories-empty">
+            <p className="muted">暂无历史仓库</p>
+            <p className="muted">
+              在 Git 仓库目录中执行 <code>mergev</code> 命令以开始使用
+            </p>
+          </div>
+        ) : (
+          <div className="repositories-list">
+            {repos.map((repo) => (
+              <div
+                key={repo.path}
+                className="repository-item"
+                onClick={() => onOpenRepository(repo.path)}
+              >
+                <RepositoryListContent repo={repo} homeDir={homeDir} />
+              </div>
+            ))}
+          </div>
+        )}
+        <button
+          type="button"
+          className="close-app-button"
+          onClick={onClose}
+        >
+          Close
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -1075,6 +1841,7 @@ function MergeScreen({
     emptyPaneHighlights,
   );
   const [undoStack, setUndoStack] = useState<MergeUndoEntry[]>([]);
+  const [redoStack, setRedoStack] = useState<MergeUndoEntry[]>([]);
   const unresolvedConflicts = session
     ? session.conflicts.filter(
         (conflict) => !isResolutionComplete(conflict.resolution, conflict),
@@ -1086,6 +1853,7 @@ function MergeScreen({
   const unresolvedConflictBlocks = unresolvedConflicts.length - unresolvedChanges;
   const canSave = session !== null && session.conflicts.length > 0 && unresolvedConflicts.length === 0;
   const canUndo = undoStack.length > 0;
+  const canRedo = redoStack.length > 0;
   const canGoPrev = hasUnresolvedInDirection(-1);
   const canGoNext = hasUnresolvedInDirection(1);
 
@@ -1121,6 +1889,8 @@ function MergeScreen({
         dirty: session.dirty,
       },
     ]);
+    // 任何新操作都会清空 redo 栈
+    setRedoStack([]);
   }
 
   function setDecision(
@@ -1177,12 +1947,52 @@ function MergeScreen({
     }
     const previous = undoStack[undoStack.length - 1];
     setUndoStack((stack) => stack.slice(0, -1));
+    // 将当前状态推入 redo 栈
+    setRedoStack((stack) => [
+      ...stack,
+      {
+        resolutions: session.resolutions.map((item) => ({
+          ...item,
+          acceptOrder: [...item.acceptOrder],
+        })),
+        activeConflict: session.activeConflict,
+        dirty: session.dirty,
+      },
+    ]);
     updateSession(
       rebuildSession(
         session.document,
         previous.resolutions,
         previous.activeConflict,
         previous.dirty,
+      ),
+    );
+  }
+
+  function redoDecision() {
+    if (!session || redoStack.length === 0) {
+      return;
+    }
+    const next = redoStack[redoStack.length - 1];
+    setRedoStack((stack) => stack.slice(0, -1));
+    // 将当前状态推入 undo 栈
+    setUndoStack((stack) => [
+      ...stack,
+      {
+        resolutions: session.resolutions.map((item) => ({
+          ...item,
+          acceptOrder: [...item.acceptOrder],
+        })),
+        activeConflict: session.activeConflict,
+        dirty: session.dirty,
+      },
+    ]);
+    updateSession(
+      rebuildSession(
+        session.document,
+        next.resolutions,
+        next.activeConflict,
+        next.dirty,
       ),
     );
   }
@@ -1346,6 +2156,33 @@ function MergeScreen({
     }
   }
 
+  async function handleCancel() {
+    if (!session) {
+      onBack();
+      return;
+    }
+
+    // 如果有任何操作（undo stack 不为空）或者标记为 dirty，弹出确认对话框
+    if (session.dirty || undoStack.length > 0) {
+      const confirmed = await confirm(
+        "当前有未保存的更改，确定要取消合并操作吗？",
+        {
+          title: "确认取消",
+          kind: "warning",
+          okLabel: "取消已改动内容，并取消合并",
+          cancelLabel: "继续合并",
+        }
+      );
+
+      if (confirmed) {
+        onBack();
+      }
+    } else {
+      // 没有任何更改，直接返回
+      onBack();
+    }
+  }
+
   useEffect(() => {
     if (!session || session.activeConflict < 0) {
       return;
@@ -1388,6 +2225,7 @@ function MergeScreen({
   useEffect(() => {
     setPaneHighlights(emptyPaneHighlights());
     setUndoStack([]);
+    setRedoStack([]);
   }, [view.selectedPath]);
 
   useEffect(() => {
@@ -1464,6 +2302,14 @@ function MergeScreen({
 
       const key = event.key.toLowerCase();
       const hasMod = event.metaKey || event.ctrlKey;
+      if (hasMod && key === "z" && event.shiftKey) {
+        if (!canRedo) {
+          return;
+        }
+        event.preventDefault();
+        redoDecision();
+        return;
+      }
       if (hasMod && key === "z" && !event.shiftKey) {
         if (!canUndo) {
           return;
@@ -1524,9 +2370,24 @@ function MergeScreen({
     <div className="workspace">
       <header className="topbar">
         <div className="topbar-main">
-          <button type="button" className="ghost" onClick={onBack}>
-            ← Conflicts
-          </button>
+          <div className="topbar-navigation">
+            <button
+              type="button"
+              className="ghost"
+              disabled={!canGoPrev}
+              onClick={() => goConflict(-1)}
+            >
+              上一块
+            </button>
+            <button
+              type="button"
+              className="ghost"
+              disabled={!canGoNext}
+              onClick={() => goConflict(1)}
+            >
+              下一块
+            </button>
+          </div>
           {session ? (
             <>
               <span className="muted">{session.document.path}</span>
@@ -1610,38 +2471,8 @@ function MergeScreen({
                 ) : null}
               </div>
               <div className="bottombar-actions">
-                <button
-                  type="button"
-                  className="ghost"
-                  disabled={session.activeConflict < 0}
-                  onClick={() => setDecision("unresolved")}
-                >
-                  Reset
-                </button>
-                <button
-                  type="button"
-                  className="ghost"
-                  disabled={!canUndo}
-                  title="Ctrl/⌘ + Z"
-                  onClick={() => undoDecision()}
-                >
-                  撤销
-                </button>
-                <button
-                  type="button"
-                  className="ghost"
-                  disabled={!canGoPrev}
-                  onClick={() => goConflict(-1)}
-                >
-                  上一块
-                </button>
-                <button
-                  type="button"
-                  className="ghost"
-                  disabled={!canGoNext}
-                  onClick={() => goConflict(1)}
-                >
-                  下一块
+                <button type="button" className="ghost" onClick={handleCancel}>
+                  取消
                 </button>
                 <button
                   type="button"
@@ -1649,7 +2480,7 @@ function MergeScreen({
                   disabled={!canSave || view.saving}
                   onClick={() => void saveFile()}
                 >
-                  {view.saving ? "保存中…" : "Save & Stage"}
+                  {view.saving ? "保存中…" : "应用"}
                 </button>
               </div>
             </footer>
