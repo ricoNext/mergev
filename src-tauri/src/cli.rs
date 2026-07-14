@@ -126,23 +126,12 @@ fn create_cli_entry(exe: &Path, link: &Path) -> Result<(), String> {
 
 #[cfg(windows)]
 fn create_cli_entry(exe: &Path, link: &Path) -> Result<(), String> {
-    // Pre-check in the .cmd so errors show even when the GUI binary has no console.
+    // Keep the batch file ASCII-only. The app binary handles repo validation and
+    // prints localized CLI errors with the Windows Unicode console API.
     let script = format!(
         concat!(
             "@echo off\r\n",
-            "chcp 65001 >nul 2>&1\r\n",
-            "set MERGEV_CWD=%CD%\r\n",
-            "where git >nul 2>&1\r\n",
-            "if errorlevel 1 (\r\n",
-            "  echo 错误: 未找到 git，请先安装 Git。\r\n",
-            "  exit /b 1\r\n",
-            ")\r\n",
-            "git -C \"%MERGEV_CWD%\" rev-parse --show-toplevel >nul 2>&1\r\n",
-            "if errorlevel 1 (\r\n",
-            "  echo 错误: 当前目录不是 Git 仓库: %MERGEV_CWD%\r\n",
-            "  echo 请在仓库根目录或子目录中执行 mergev。\r\n",
-            "  exit /b 1\r\n",
-            ")\r\n",
+            "set \"MERGEV_CWD=%CD%\"\r\n",
             "\"{}\" %*\r\n"
         ),
         exe.display()

@@ -31,9 +31,17 @@ impl std::fmt::Display for RepoError {
 /// Resolve the Git repository root for `cwd`.
 pub fn resolve_repo_root(cwd: &Path) -> Result<PathBuf, RepoError> {
     let cwd_str = cwd.to_string_lossy();
-    let output = Command::new("git")
-        .args(["-C", cwd_str.as_ref(), "rev-parse", "--show-toplevel"])
-        .output();
+    let mut cmd = Command::new("git");
+    cmd.args(["-C", cwd_str.as_ref(), "rev-parse", "--show-toplevel"]);
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let output = cmd.output();
 
     let output = match output {
         Ok(output) => output,
@@ -84,16 +92,30 @@ pub fn enforce_cli_repo_gate() {
 
     if let Err(err) = resolve_repo_root(&cwd) {
         attach_cli_console();
-        eprintln!("{err}");
-        let _ = std::io::Write::flush(&mut std::io::stderr());
+        print_cli_error(&err.to_string());
         std::process::exit(1);
     }
 }
 
 /// Get the current branch name for the given repository.
 pub fn get_current_branch(repo_root: &Path) -> Result<String, String> {
-    let output = Command::new("git")
-        .args(["-C", &repo_root.to_string_lossy(), "rev-parse", "--abbrev-ref", "HEAD"])
+    let mut cmd = Command::new("git");
+    cmd.args([
+        "-C",
+        &repo_root.to_string_lossy(),
+        "rev-parse",
+        "--abbrev-ref",
+        "HEAD",
+    ]);
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let output = cmd
         .output()
         .map_err(|e| format!("无法执行 git 命令: {}", e))?;
 
@@ -112,15 +134,54 @@ fn attach_cli_console() {
     #[link(name = "kernel32")]
     extern "system" {
         fn AttachConsole(dw_process_id: u32) -> i32;
-        fn SetConsoleOutputCP(code_page: u32) -> i32;
     }
     const ATTACH_PARENT_PROCESS: u32 = u32::MAX;
-    const CP_UTF8: u32 = 65001;
     unsafe {
         AttachConsole(ATTACH_PARENT_PROCESS);
-        SetConsoleOutputCP(CP_UTF8);
     }
 }
 
 #[cfg(not(windows))]
 fn attach_cli_console() {}
+
+#[cfg(windows)]
+fn print_cli_error(message: &str) {
+    use std::ffi::c_void;
+    use std::ptr::null_mut;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetStdHandle(n_std_handle: u32) -> *mut c_void;
+        fn WriteConsoleW(
+            h_console_output: *mut c_void,
+            lp_buffer: *const u16,
+            n_number_of_chars_to_write: u32,
+            lp_number_of_chars_written: *mut u32,
+            lp_reserved: *mut c_void,
+        ) -> i32;
+    }
+
+    const STD_ERROR_HANDLE: u32 = (-12i32) as u32;
+    let mut text: Vec<u16> = format!("{message}\n").encode_utf16().collect();
+    let mut written = 0u32;
+    let ok = unsafe {
+        WriteConsoleW(
+            GetStdHandle(STD_ERROR_HANDLE),
+            text.as_mut_ptr(),
+            text.len() as u32,
+            &mut written,
+            null_mut(),
+        )
+    };
+
+    if ok == 0 {
+        eprintln!("{message}");
+        let _ = std::io::Write::flush(&mut std::io::stderr());
+    }
+}
+
+#[cfg(not(windows))]
+fn print_cli_error(message: &str) {
+    eprintln!("{message}");
+    let _ = std::io::Write::flush(&mut std::io::stderr());
+}
