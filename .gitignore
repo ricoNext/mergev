@@ -72,3 +72,6 @@ src-tauri/icons/ios/
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+
+docs/
