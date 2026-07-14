@@ -3,10 +3,8 @@
 <div align="center">
 
 [![CI](https://github.com/ricoNext/mergev/actions/workflows/ci.yml/badge.svg)](https://github.com/ricoNext/mergev/actions/workflows/ci.yml)
-[![Release Please](https://github.com/ricoNext/mergev/actions/workflows/release-please.yml/badge.svg)](https://github.com/ricoNext/mergev/actions/workflows/release-please.yml)
-[![Desktop Release](https://github.com/ricoNext/mergev/actions/workflows/publish-desktop.yml/badge.svg)](https://github.com/ricoNext/mergev/actions/workflows/publish-desktop.yml)
 [![GitHub release](https://img.shields.io/github/v/release/ricoNext/mergev?display_name=tag&sort=semver)](https://github.com/ricoNext/mergev/releases)
-[![Coverage](https://img.shields.io/badge/coverage-not%20configured-lightgrey)](#项目状态)
+[![codecov](https://codecov.io/gh/ricoNext/mergev/branch/main/graph/badge.svg)](https://codecov.io/gh/ricoNext/mergev)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)](https://tauri.app/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=111)](https://react.dev/)
