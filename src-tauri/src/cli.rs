@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
 pub struct CliStatus {
-    pub installed: bool,
     pub link_path: PathBuf,
     pub path_ready: bool,
 }
@@ -17,7 +16,6 @@ pub fn link_path() -> Result<PathBuf, String> {
 pub fn status() -> Result<CliStatus, String> {
     let link = link_path()?;
     Ok(CliStatus {
-        installed: is_mergev_cli(&link)?,
         link_path: link,
         path_ready: is_local_bin_on_path(),
     })
@@ -43,23 +41,6 @@ pub fn install() -> Result<CliStatus, String> {
     }
 
     create_cli_entry(&exe, &link)?;
-    status()
-}
-
-pub fn uninstall() -> Result<CliStatus, String> {
-    let link = link_path()?;
-    if !path_exists(&link) {
-        return status();
-    }
-
-    if !is_mergev_cli(&link)? {
-        return Err(format!(
-            "{} 不是 mergev 安装的命令，已跳过删除",
-            link.display()
-        ));
-    }
-
-    fs::remove_file(&link).map_err(|e| format!("移除命令失败: {e}"))?;
     status()
 }
 

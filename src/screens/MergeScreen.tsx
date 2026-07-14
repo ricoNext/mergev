@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { confirm } from "@tauri-apps/plugin-dialog";
+import { listen } from "@tauri-apps/api/event";
 import type { AppView, MergeSession, MergeUndoEntry, ConflictDecision } from "../types";
+import type { Theme } from "../theme";
 import type { PaneHighlights } from "../syntaxHighlight";
 import {
   emptyPaneHighlights,
@@ -26,6 +28,8 @@ import {
 } from "../utils/conflictUtils";
 import { isChangeBlock } from "../utils/conflictUtils";
 import { MergeGrid } from "../components/merge/MergeGrid";
+import { saveTheme, applyThemeToDOM, resolveTheme } from "../theme";
+import { updateSyntaxTheme } from "../syntaxHighlight";
 
 export function MergeScreen({
   view,
@@ -488,6 +492,21 @@ export function MergeScreen({
     theirsHighlightText,
     resultHighlightText,
   ]);
+
+  // 监听来自菜单的主题切换事件
+  useEffect(() => {
+    const unlisten = listen<string>("theme-menu-selected", (event) => {
+      const selectedTheme = event.payload as Theme;
+      const resolved = resolveTheme(selectedTheme);
+      applyThemeToDOM(resolved);
+      updateSyntaxTheme(resolved);
+      saveTheme(selectedTheme);
+    });
+
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {

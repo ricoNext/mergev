@@ -29,4 +29,21 @@ export default defineConfig(async () => ({
       ignored: ["**/src-tauri/**"],
     },
   },
+  build: {
+    // 前端代码分割优化
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // 将 React 相关库单独打包
+          'react-vendor': ['react', 'react-dom'],
+          // 将 Tauri API 单独打包
+          'tauri-vendor': ['@tauri-apps/api', '@tauri-apps/plugin-dialog', '@tauri-apps/plugin-opener'],
+          // Shiki 单独打包为懒加载块
+          'shiki': ['shiki'],
+        },
+      },
+    },
+    // 提高 chunk 大小警告阈值
+    chunkSizeWarningLimit: 1000,
+  },
 }));

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { AppView, WorkspaceSnapshot, MergeDocument } from "./types";
 import { FirstLaunchDialog } from "./FirstLaunchDialog";
@@ -10,11 +10,41 @@ import { buildSessionFromDocument, rebuildSession, serializeResult } from "./cor
 import { applyAccept, emptyResolution } from "./utils/conflictUtils";
 import { fileNameOf } from "./utils/stringUtils";
 import { confirm } from "@tauri-apps/plugin-dialog";
+import { updateSyntaxTheme } from "./syntaxHighlight";
+import {
+  getSavedTheme,
+  saveTheme,
+  resolveTheme,
+  applyThemeToDOM,
+  type Theme,
+} from "./theme";
 import "./App.css";
 
 function App() {
   const [view, setView] = useState<AppView>({ kind: "loading" });
   const [showFirstLaunchDialog, setShowFirstLaunchDialog] = useState(false);
+  const [theme, setTheme] = useState<Theme>("system");
+
+  // 应用主题到 DOM
+  const applyTheme = useCallback((newTheme: Theme) => {
+    const resolved = resolveTheme(newTheme);
+    applyThemeToDOM(resolved);
+    updateSyntaxTheme(resolved);
+    saveTheme(newTheme);
+  }, []);
+
+  // 切换主题
+  const toggleTheme = useCallback((newTheme: Theme) => {
+    setTheme(newTheme);
+    applyTheme(newTheme);
+  }, [applyTheme]);
+
+  // 初始化主题
+  useEffect(() => {
+    const savedTheme = getSavedTheme();
+    setTheme(savedTheme);
+    applyTheme(savedTheme);
+  }, [applyTheme]);
 
   async function checkFirstLaunch() {
     try {
@@ -130,8 +160,9 @@ function App() {
 
   async function addRepository() {
     try {
-      const { open } = await import("@tauri-apps/plugin-dialog");
-      const selected = await open({
+      // 动态导入对话框插件
+      const dialogModule = await import("@tauri-apps/plugin-dialog");
+      const selected = await dialogModule.open({
         directory: true,
         multiple: false,
         title: "选择 Git 仓库目录",
@@ -362,8 +393,10 @@ function App() {
     return (
       <CombinedScreen
         view={view}
-        onSelectRepository={(path) => void switchRepository(path)}
-        onSelectFile={(path) =>
+        theme={theme}
+        onToggleTheme={toggleTheme}
+        onSwitchRepository={(path) => void switchRepository(path)}
+        onSelect={(path) =>
           setView({ ...view, selectedFilePath: path, actionError: null })
         }
         onRefresh={() => void loadInitial()}
@@ -483,7 +516,6 @@ function App() {
       view={view}
       onBack={() => {
         if (view.kind === "merge") {
-          // 尝试返回到 combined 视图
           void loadInitial();
         }
       }}
