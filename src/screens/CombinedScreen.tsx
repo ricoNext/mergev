@@ -1,14 +1,18 @@
 import { useEffect, useState } from "react";
 import type { AppView } from "../types";
+import type { Theme } from "../theme";
 import { RepositoryListContent } from "../components/RepositoryListContent";
 import { StatusCell } from "../components/StatusCell";
 import { useHomeDir } from "../hooks/useHomeDir";
 import { fileNameOf, dirOf } from "../utils/stringUtils";
+import { listen } from "@tauri-apps/api/event";
 
 export function CombinedScreen({
   view,
-  onSelectRepository,
-  onSelectFile,
+  theme: _theme,
+  onToggleTheme,
+  onSwitchRepository,
+  onSelect,
   onRefresh,
   onRemoveRepository,
   onAddRepository,
@@ -18,8 +22,10 @@ export function CombinedScreen({
   onClose: _onClose,
 }: {
   view: Extract<AppView, { kind: "combined" }>;
-  onSelectRepository: (path: string) => void;
-  onSelectFile: (path: string) => void;
+  theme: Theme;
+  onToggleTheme: (theme: Theme) => void;
+  onSwitchRepository: (path: string) => void;
+  onSelect: (path: string) => void;
   onRefresh: () => void;
   onRemoveRepository: (path: string) => void;
   onAddRepository: () => void;
@@ -40,6 +46,18 @@ export function CombinedScreen({
       return () => window.removeEventListener("click", handleClick);
     }
   }, [menuOpen]);
+
+  // 监听来自菜单的主题切换事件
+  useEffect(() => {
+    const unlisten = listen<string>("theme-menu-selected", (event) => {
+      const selectedTheme = event.payload as Theme;
+      onToggleTheme(selectedTheme);
+    });
+
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [onToggleTheme]);
 
   return (
     <div className="combined-view">
@@ -72,7 +90,7 @@ export function CombinedScreen({
               >
                 <div
                   className="repository-info"
-                  onClick={() => onSelectRepository(repo.path)}
+                  onClick={() => onSwitchRepository(repo.path)}
                 >
                   <RepositoryListContent repo={repo} homeDir={homeDir} />
                 </div>
@@ -182,7 +200,7 @@ export function CombinedScreen({
                           className={
                             file.path === selectedFilePath ? "selected" : undefined
                           }
-                          onClick={() => onSelectFile(file.path)}
+                          onClick={() => onSelect(file.path)}
                         >
                           <td>
                             <div className="name-cell">

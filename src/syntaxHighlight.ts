@@ -1,4 +1,5 @@
-import { createHighlighter, type Highlighter } from "shiki";
+// 懒加载 Shiki，延迟到真正需要语法高亮时才加载
+type Highlighter = any;
 
 export type SyntaxToken = {
   text: string;
@@ -13,6 +14,28 @@ export type PaneHighlights = {
   result: Map<number, HighlightedLine>;
   theirs: Map<number, HighlightedLine>;
 };
+
+// 主题配置
+const LIGHT_THEME = "github-light";
+const DARK_THEME = "github-dark";
+
+let currentTheme: "light" | "dark" = "light";
+
+/**
+ * 更新语法高亮主题
+ */
+export function updateSyntaxTheme(theme: "light" | "dark") {
+  currentTheme = theme;
+  // 清除高亮器缓存，强制重新创建
+  cachedHighlighter = null;
+}
+
+/**
+ * 获取当前主题名称
+ */
+function getCurrentThemeId(): string {
+  return currentTheme === "dark" ? DARK_THEME : LIGHT_THEME;
+}
 
 const LANGUAGE_BY_EXTENSION: Record<string, string> = {
   ".ts": "typescript",
@@ -61,21 +84,29 @@ const INITIAL_LANGUAGES = [
   "bash",
 ] as const;
 
-const THEME = "github-light";
-
 /** 超过该行数时跳过语法高亮，避免大文件卡顿。 */
 export const HIGHLIGHT_LINE_LIMIT = 3000;
 
-let highlighterPromise: Promise<Highlighter> | null = null;
+let cachedHighlighter: Highlighter | null = null;
+let shikiModule: any = null;
 
-function getHighlighter(): Promise<Highlighter> {
-  if (!highlighterPromise) {
-    highlighterPromise = createHighlighter({
-      themes: [THEME],
+async function loadShiki() {
+  if (!shikiModule) {
+    shikiModule = await import("shiki");
+  }
+  return shikiModule;
+}
+
+async function getHighlighter(): Promise<Highlighter> {
+  if (!cachedHighlighter) {
+    const shiki = await loadShiki();
+    const themeId = getCurrentThemeId();
+    cachedHighlighter = await shiki.createHighlighter({
+      themes: [themeId],
       langs: [...INITIAL_LANGUAGES],
     });
   }
-  return highlighterPromise;
+  return cachedHighlighter;
 }
 
 function fileNameOf(path: string): string {
@@ -156,9 +187,10 @@ export async function highlightLines(
     if (!ready) {
       return plainLines(text);
     }
+    const themeId = getCurrentThemeId();
     const result = highlighter.codeToTokens(text, {
       lang: language as never,
-      theme: THEME,
+      theme: themeId,
     });
     return toHighlightedLines(result.tokens);
   } catch {
