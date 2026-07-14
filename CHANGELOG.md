@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.2.0](https://github.com/ricoNext/mergev/compare/v0.1.0...v0.2.0) (2026-07-14)
+
+
+### 新功能
+
+* **theme:** 支持亮色/暗色/跟随系统主题切换 ([48b85c0](https://github.com/ricoNext/mergev/commit/48b85c0c1758194a312e501fce4c49fadb845699))
+
+
+### 文档
+
+* update CHANGELOG for v0.2.0 ([dc06b14](https://github.com/ricoNext/mergev/commit/dc06b1453ed779427d8f9470aff78a463f83ff8e))
+
+
+### 重构
+
+* **ui:** 拆分 App 为屏幕与组件模块 ([0f7cbbb](https://github.com/ricoNext/mergev/commit/0f7cbbbdec1e73ef87cff0d19f8b30122de7b306))
+* **ui:** 拆分 App 为屏幕与组件模块 ([d390b04](https://github.com/ricoNext/mergev/commit/d390b04faf7692adc76a45ada2aa77c3632d7263))
+
 ## 0.2.0 - 2026-07-14
 
 ### 重构
