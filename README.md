@@ -12,12 +12,12 @@
 
 </div>
 
+![](https://neptune-ipc.oss-cn-shenzhen.aliyuncs.com/img/20260714091840470.png)
 
 Mergev 是一个专注于 Git 冲突解决的桌面工具。它把难读的冲突标记变成清晰的三栏可视化界面，让你像在专业 IDE 的合并窗口里一样，对比 Yours、Theirs 和最终 Result，逐块决定保留哪一边，最后一键保存并加入暂存区。
 
 如果你习惯在终端里 `merge`、`rebase`、`cherry-pick`，但不想在冲突出现时靠肉眼编辑 `<<<<<<<`、`=======`、`>>>>>>>`，Mergev 就是为这个时刻准备的。
 
-![](https://neptune-ipc.oss-cn-shenzhen.aliyuncs.com/img/20260714091840470.png)
 
 
 ## 为什么用 Mergev
