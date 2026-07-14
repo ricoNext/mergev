@@ -144,3 +144,5 @@ git rebase --continue
 ## 项目状态
 
 Mergev 当前是一个基于 Tauri 2、React 和 TypeScript 的桌面应用，核心目标是提供轻量、清晰、可靠的 Git 冲突解决体验。
+
+友情链接： [linux](https://linux.do)
