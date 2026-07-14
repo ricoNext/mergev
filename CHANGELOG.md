@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.3.0 - 2026-07-14
+
+### 新功能
+
+- 支持亮色/暗色/跟随系统主题切换
+
+### 修复
+
+- 补齐测试依赖并更新 README 安装说明
+
+### 文档
+
+- update README to remove duplicate image and improve clarity
+- update CHANGELOG for v0.2.0
+
+### 测试
+
+- 补全 ConflictRegion 测试桩类型字段
+- 补充工具函数单测并同步覆盖率配置与锁文件
+
+### 杂项
+
+- 移除 Release Please，新增发版脚本与 Vitest 覆盖率
+
+### 变更
+
+- Update README.md
+
 ## 0.2.0 - 2026-07-14
 
 ### 重构
