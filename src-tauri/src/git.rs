@@ -112,10 +112,13 @@ fn attach_cli_console() {
     #[link(name = "kernel32")]
     extern "system" {
         fn AttachConsole(dw_process_id: u32) -> i32;
+        fn SetConsoleOutputCP(code_page: u32) -> i32;
     }
     const ATTACH_PARENT_PROCESS: u32 = u32::MAX;
+    const CP_UTF8: u32 = 65001;
     unsafe {
         AttachConsole(ATTACH_PARENT_PROCESS);
+        SetConsoleOutputCP(CP_UTF8);
     }
 }
 

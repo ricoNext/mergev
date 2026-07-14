@@ -2015,17 +2015,23 @@ fn git_run(root: &Path, args: &[&str]) -> Result<(), String> {
 }
 
 fn git_command(root: &Path, args: &[&str]) -> Result<std::process::Output, String> {
-    Command::new("git")
-        .args(args)
-        .current_dir(root)
-        .output()
-        .map_err(|err| {
-            if err.kind() == std::io::ErrorKind::NotFound {
-                "未找到 git，请先安装 Git。".into()
-            } else {
-                err.to_string()
-            }
-        })
+    let mut cmd = Command::new("git");
+    cmd.args(args).current_dir(root);
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    cmd.output().map_err(|err| {
+        if err.kind() == std::io::ErrorKind::NotFound {
+            "未找到 git，请先安装 Git。".into()
+        } else {
+            err.to_string()
+        }
+    })
 }
 
 fn repo_error_to_string(err: RepoError) -> String {
