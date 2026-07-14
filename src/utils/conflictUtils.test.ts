@@ -4,19 +4,14 @@ import {
   sideHasSubstantive,
   isChangeBlock,
   sideIsSettled,
-  sideNeedsAction,
-  sideHasConflictActions,
-  sideDecisionMerged,
   emptyResolution,
   applyAccept,
   applyIgnore,
   decisionFromResolution,
-  isResolutionComplete,
   resolutionsEqual,
   decisionIncludesOurs,
   decisionIncludesTheirs,
   decisionResultLines,
-  nextUnresolvedIndex,
 } from './conflictUtils';
 
 describe('conflictUtils', () => {
@@ -75,6 +70,10 @@ describe('conflictUtils', () => {
   describe('sideIsSettled', () => {
     it('应该识别已决定的一侧', () => {
       const conflict: ConflictRegion = {
+        index: 0,
+        rowStart: 0,
+        rowEnd: 1,
+        decision: 'ours',
         ours: 'a',
         theirs: 'b',
         resolution: { ours: 'accepted', theirs: 'pending', acceptOrder: ['ours'] },
@@ -84,12 +83,12 @@ describe('conflictUtils', () => {
     });
 
     it('应该处理没有 resolution 的情况', () => {
-      const conflict: ConflictRegion = {
+      const conflict: Partial<ConflictRegion> = {
         ours: 'a',
         theirs: 'b',
       };
-      expect(sideIsSettled('ours', conflict)).toBe(false);
-      expect(sideIsSettled('theirs', conflict)).toBe(false);
+      expect(sideIsSettled('ours', conflict as ConflictRegion)).toBe(false);
+      expect(sideIsSettled('theirs', conflict as ConflictRegion)).toBe(false);
     });
 
     it('应该处理 null 和 undefined', () => {
