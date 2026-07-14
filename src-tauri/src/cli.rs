@@ -130,6 +130,7 @@ fn create_cli_entry(exe: &Path, link: &Path) -> Result<(), String> {
     let script = format!(
         concat!(
             "@echo off\r\n",
+            "chcp 65001 >nul 2>&1\r\n",
             "set MERGEV_CWD=%CD%\r\n",
             "where git >nul 2>&1\r\n",
             "if errorlevel 1 (\r\n",
