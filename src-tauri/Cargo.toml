@@ -1,6 +1,6 @@
 [package]
 name = "mergev"
-version = "0.6.0"
+version = "0.7.0"
 description = "Git merge conflict resolver with a three-pane visual workflow"
 authors = ["you"]
 edition = "2021"
