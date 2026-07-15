@@ -83,6 +83,19 @@ fn resolve_and_cache_active_repository(
     Ok(repo)
 }
 
+/// Resolve a repository root for file-level commands from an explicit path.
+///
+/// File-level commands must NOT rely on the global active repository: the UI can
+/// switch repos while an async accept/save is in flight, which would otherwise
+/// make the save land in the wrong repo. Callers pass the workspace root they are
+/// operating on and we resolve it independently here.
+fn resolve_repo_root_arg(repo_root: &str) -> Result<PathBuf, String> {
+    if repo_root.is_empty() {
+        return Err("缺少仓库根路径 (repoRoot)".to_string());
+    }
+    git::resolve_repo_root(&PathBuf::from(repo_root)).map_err(|err| err.to_string())
+}
+
 fn active_repository(app: &tauri::AppHandle) -> Result<ActiveRepository, String> {
     if let Some(state) = app.try_state::<ActiveRepositoryState>() {
         if let Ok(cached) = state.0.lock() {
@@ -193,53 +206,53 @@ fn refresh_active_repository(app: tauri::AppHandle) -> Result<ActiveRepositoryPa
 }
 
 #[tauri::command]
-fn get_conflict_file(app: tauri::AppHandle, path: String) -> Result<ConflictFileDetail, String> {
-    let repo = active_repository(&app)?;
-    workspace::load_conflict_file(&repo.root, &path)
+fn get_conflict_file(repo_root: String, path: String) -> Result<ConflictFileDetail, String> {
+    let root = resolve_repo_root_arg(&repo_root)?;
+    workspace::load_conflict_file(&root, &path)
 }
 
 #[tauri::command]
-fn get_conflict_count(app: tauri::AppHandle, path: String) -> Result<usize, String> {
-    let repo = active_repository(&app)?;
-    workspace::count_conflicts_for_path(&repo.root, &path)
+fn get_conflict_count(repo_root: String, path: String) -> Result<usize, String> {
+    let root = resolve_repo_root_arg(&repo_root)?;
+    workspace::count_conflicts_for_path(&root, &path)
 }
 
 #[tauri::command]
 fn save_conflict_file(
-    app: tauri::AppHandle,
+    repo_root: String,
     path: String,
     decisions: Vec<String>,
     stage: bool,
 ) -> Result<ConflictFileDetail, String> {
-    let repo = active_repository(&app)?;
+    let root = resolve_repo_root_arg(&repo_root)?;
     let parsed = decisions
         .into_iter()
         .map(|value| parse_decision(&value))
         .collect::<Result<Vec<_>, _>>()?;
-    workspace::apply_decisions_and_save(&repo.root, &path, &parsed, stage)
+    workspace::apply_decisions_and_save(&root, &path, &parsed, stage)
 }
 
 #[tauri::command]
-fn accept_file_side(app: tauri::AppHandle, path: String, side: String) -> Result<(), String> {
-    let repo = active_repository(&app)?;
-    workspace::accept_file_side(&repo.root, &path, &side)
+fn accept_file_side(repo_root: String, path: String, side: String) -> Result<(), String> {
+    let root = resolve_repo_root_arg(&repo_root)?;
+    workspace::accept_file_side(&root, &path, &side)
 }
 
 #[tauri::command]
-fn get_merge_document(app: tauri::AppHandle, path: String) -> Result<MergeDocument, String> {
-    let repo = active_repository(&app)?;
-    workspace::load_merge_document(&repo.root, &path)
+fn get_merge_document(repo_root: String, path: String) -> Result<MergeDocument, String> {
+    let root = resolve_repo_root_arg(&repo_root)?;
+    workspace::load_merge_document(&root, &path)
 }
 
 #[tauri::command]
 fn save_merge_result(
-    app: tauri::AppHandle,
+    repo_root: String,
     path: String,
     result: String,
     stage: bool,
 ) -> Result<ConflictFileDetail, String> {
-    let repo = active_repository(&app)?;
-    workspace::save_merge_result(&repo.root, &path, &result, stage)
+    let root = resolve_repo_root_arg(&repo_root)?;
+    workspace::save_merge_result(&root, &path, &result, stage)
 }
 
 #[tauri::command]

@@ -306,6 +306,7 @@ export function MergeScreen({
         path: updatedSession.document.path,
         result,
         stage: true,
+        repoRoot: workspace.root,
       });
       onSaved();
     } catch (error) {
@@ -330,6 +331,7 @@ export function MergeScreen({
         path: session.document.path,
         result,
         stage: true,
+        repoRoot: workspace.root,
       });
       onSaved();
     } catch (error) {
@@ -353,6 +355,7 @@ export function MergeScreen({
         path: session.document.path,
         result,
         stage: true,
+        repoRoot: workspace.root,
       });
       onSaved();
     } catch (error) {
