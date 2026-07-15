@@ -2,6 +2,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[derive(Debug, Clone)]
+pub struct RepoPaths {
+    pub root: PathBuf,
+    pub git_dir: PathBuf,
+}
+
+#[derive(Debug, Clone)]
 pub enum RepoError {
     GitNotFound,
     NotARepository { cwd: PathBuf },
@@ -28,11 +34,32 @@ impl std::fmt::Display for RepoError {
     }
 }
 
+pub fn resolve_repo_paths(cwd: &Path) -> Result<RepoPaths, RepoError> {
+    let output = git_rev_parse(cwd, &["--show-toplevel", "--absolute-git-dir"])?;
+    let mut lines = output.lines().map(str::trim).filter(|line| !line.is_empty());
+    let root = lines.next().ok_or_else(|| RepoError::Failed {
+        message: "git rev-parse 返回空仓库路径".into(),
+    })?;
+    let git_dir = lines.next().ok_or_else(|| RepoError::Failed {
+        message: "git rev-parse 返回空 Git 目录".into(),
+    })?;
+
+    Ok(RepoPaths {
+        root: PathBuf::from(root),
+        git_dir: PathBuf::from(git_dir),
+    })
+}
+
 /// Resolve the Git repository root for `cwd`.
 pub fn resolve_repo_root(cwd: &Path) -> Result<PathBuf, RepoError> {
+    resolve_repo_paths(cwd).map(|paths| paths.root)
+}
+
+fn git_rev_parse(cwd: &Path, args: &[&str]) -> Result<String, RepoError> {
     let cwd_str = cwd.to_string_lossy();
     let mut cmd = Command::new("git");
-    cmd.args(["-C", cwd_str.as_ref(), "rev-parse", "--show-toplevel"]);
+    cmd.args(["-C", cwd_str.as_ref(), "rev-parse"]);
+    cmd.args(args);
 
     #[cfg(windows)]
     {
@@ -56,13 +83,13 @@ pub fn resolve_repo_root(cwd: &Path) -> Result<PathBuf, RepoError> {
     };
 
     if output.status.success() {
-        let root = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if root.is_empty() {
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if stdout.is_empty() {
             return Err(RepoError::Failed {
                 message: "git rev-parse 返回空路径".into(),
             });
         }
-        return Ok(PathBuf::from(root));
+        return Ok(stdout);
     }
 
     let stderr = String::from_utf8_lossy(&output.stderr).to_ascii_lowercase();
@@ -94,36 +121,6 @@ pub fn enforce_cli_repo_gate() {
         attach_cli_console();
         print_cli_error(&err.to_string());
         std::process::exit(1);
-    }
-}
-
-/// Get the current branch name for the given repository.
-pub fn get_current_branch(repo_root: &Path) -> Result<String, String> {
-    let mut cmd = Command::new("git");
-    cmd.args([
-        "-C",
-        &repo_root.to_string_lossy(),
-        "rev-parse",
-        "--abbrev-ref",
-        "HEAD",
-    ]);
-
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-
-    let output = cmd
-        .output()
-        .map_err(|e| format!("无法执行 git 命令: {}", e))?;
-
-    if output.status.success() {
-        let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        Ok(branch)
-    } else {
-        Err("无法获取当前分支".to_string())
     }
 }
 

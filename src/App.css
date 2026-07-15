@@ -360,6 +360,26 @@ button.ghost {
   white-space: nowrap;
 }
 
+.repository-conflict-status {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--text-muted);
+}
+
+.repository-conflict-status.has-conflicts {
+  background: var(--error);
+}
+
+.repository-conflict-status.clean {
+  background: var(--success);
+}
+
+.repository-conflict-status.unknown {
+  background: var(--border-default);
+}
+
 .repository-path {
   font-size: 0.75rem;
   color: var(--text-secondary);
@@ -382,14 +402,6 @@ button.ghost {
 .repository-branch-icon {
   flex-shrink: 0;
   color: var(--text-secondary);
-}
-
-.repository-conflict-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--error);
-  flex-shrink: 0;
 }
 
 .repository-sidebar .repository-branch {

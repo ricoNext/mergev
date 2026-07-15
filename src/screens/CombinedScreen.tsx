@@ -13,7 +13,6 @@ export function CombinedScreen({
   onToggleTheme,
   onSwitchRepository,
   onSelect,
-  onRefresh,
   onRemoveRepository,
   onAddRepository,
   onAccept,
@@ -26,7 +25,6 @@ export function CombinedScreen({
   onToggleTheme: (theme: Theme) => void;
   onSwitchRepository: (path: string) => void;
   onSelect: (path: string) => void;
-  onRefresh: () => void;
   onRemoveRepository: (path: string) => void;
   onAddRepository: () => void;
   onAccept: (side: "ours" | "theirs") => Promise<void>;
@@ -67,9 +65,6 @@ export function CombinedScreen({
           <div className="sidebar-header-actions">
             <button type="button" className="ghost" onClick={onAddRepository}>
               新增项目
-            </button>
-            <button type="button" className="ghost" onClick={onRefresh}>
-              刷新
             </button>
           </div>
         </header>
@@ -255,8 +250,11 @@ export function CombinedScreen({
                 {actionError ? <p className="error">{actionError}</p> : null}
                 {selectedFile ? (
                   <p className="muted action-hint">
-                    {selectedFile.conflictCount} conflict block
-                    {selectedFile.conflictCount === 1 ? "" : "s"}
+                    {selectedFile.conflictCount === null
+                      ? "正在计算冲突块…"
+                      : `${selectedFile.conflictCount} conflict block${
+                          selectedFile.conflictCount === 1 ? "" : "s"
+                        }`}
                   </p>
                 ) : null}
               </aside>

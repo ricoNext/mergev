@@ -111,8 +111,11 @@ export function ConflictsScreen({
           {actionError ? <p className="error">{actionError}</p> : null}
           {selected ? (
             <p className="muted action-hint">
-              {selected.conflictCount} conflict block
-              {selected.conflictCount === 1 ? "" : "s"}
+              {selected.conflictCount === null
+                ? "正在计算冲突块…"
+                : `${selected.conflictCount} conflict block${
+                    selected.conflictCount === 1 ? "" : "s"
+                  }`}
             </p>
           ) : null}
           <button type="button" className="close-app-button" onClick={onClose}>

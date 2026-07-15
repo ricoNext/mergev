@@ -4,13 +4,15 @@ mod git;
 mod repository_history;
 mod workspace;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
+use serde::Serialize;
 use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{Emitter, Manager};
 
-use workspace::{ConflictDecision, ConflictFileDetail, MergeDocument, WorkspaceSnapshot};
 use repository_history::RepositoryItem;
+use workspace::{ConflictDecision, ConflictFileDetail, MergeDocument, WorkspaceSnapshot};
 
 const MENU_THEME_LIGHT: &str = "theme-light";
 const MENU_THEME_DARK: &str = "theme-dark";
@@ -23,6 +25,15 @@ pub use git::enforce_cli_repo_gate;
 #[derive(Clone)]
 struct LaunchCwd(String);
 
+#[derive(Clone, Debug)]
+struct ActiveRepository {
+    root: PathBuf,
+    git_dir: PathBuf,
+}
+
+#[derive(Default)]
+struct ActiveRepositoryState(Mutex<Option<ActiveRepository>>);
+
 #[allow(dead_code)]
 impl LaunchCwd {
     fn get(&self) -> &str {
@@ -30,25 +41,105 @@ impl LaunchCwd {
     }
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ActiveRepositoryPayload {
+    workspace: WorkspaceSnapshot,
+    repos: Vec<RepositoryItem>,
+}
+
+fn cache_active_repository(app: &tauri::AppHandle, repo: ActiveRepository) {
+    std::env::set_var("MERGEV_CWD", repo.root.display().to_string());
+    std::env::set_var("MERGEV_GIT_DIR", repo.git_dir.display().to_string());
+
+    if let Some(state) = app.try_state::<ActiveRepositoryState>() {
+        if let Ok(mut cached) = state.0.lock() {
+            *cached = Some(repo);
+        }
+    }
+}
+
+fn clear_active_repository(app: &tauri::AppHandle) {
+    std::env::remove_var("MERGEV_CWD");
+    std::env::remove_var("MERGEV_GIT_DIR");
+
+    if let Some(state) = app.try_state::<ActiveRepositoryState>() {
+        if let Ok(mut cached) = state.0.lock() {
+            *cached = None;
+        }
+    }
+}
+
+fn resolve_and_cache_active_repository(
+    app: &tauri::AppHandle,
+    path: &Path,
+) -> Result<ActiveRepository, String> {
+    let paths = git::resolve_repo_paths(path).map_err(|err| err.to_string())?;
+    let repo = ActiveRepository {
+        root: paths.root,
+        git_dir: paths.git_dir,
+    };
+    cache_active_repository(app, repo.clone());
+    Ok(repo)
+}
+
+fn active_repository(app: &tauri::AppHandle) -> Result<ActiveRepository, String> {
+    if let Some(state) = app.try_state::<ActiveRepositoryState>() {
+        if let Ok(cached) = state.0.lock() {
+            if let Some(repo) = cached.clone() {
+                return Ok(repo);
+            }
+        }
+    }
+
+    let cwd = std::env::var("MERGEV_CWD")
+        .map(PathBuf::from)
+        .map_err(|_| "MERGEV_CWD 未设置".to_string())?;
+    resolve_and_cache_active_repository(app, &cwd)
+}
+
+fn load_active_repository_payload(
+    app: &tauri::AppHandle,
+    repo: &ActiveRepository,
+) -> Result<ActiveRepositoryPayload, String> {
+    cache_active_repository(app, repo.clone());
+
+    let mut workspace = workspace::load_workspace_from_root(&repo.root)?;
+    workspace.is_cli_launch = true;
+    update_repository_history_from_workspace(&workspace)?;
+
+    let repos = repository_history::get_recent_repositories()?;
+    Ok(ActiveRepositoryPayload { workspace, repos })
+}
+
+fn update_repository_history_from_workspace(snapshot: &WorkspaceSnapshot) -> Result<(), String> {
+    if snapshot.root.is_empty() || snapshot.repo_name.is_empty() {
+        return Ok(());
+    }
+
+    repository_history::update_repository_status(
+        &PathBuf::from(&snapshot.root),
+        Some(snapshot.branch.clone()),
+        Some(!snapshot.files.is_empty()),
+    )
+}
+
 #[tauri::command]
-fn get_workspace(_app: tauri::AppHandle) -> Result<WorkspaceSnapshot, String> {
+fn get_workspace(app: tauri::AppHandle) -> Result<WorkspaceSnapshot, String> {
     // 简化逻辑：只看 MERGEV_CWD 环境变量
     // 有 MERGEV_CWD → 加载该目录的冲突列表
     // 无 MERGEV_CWD → 显示仓库列表
-    match std::env::var("MERGEV_CWD") {
-        Ok(cwd_str) => {
-            // 有 MERGEV_CWD，加载该目录
-            let cwd = PathBuf::from(cwd_str);
-            let mut snapshot = workspace::load_workspace(&cwd)?;
+    let has_active_env = std::env::var_os("MERGEV_CWD").is_some();
+    match active_repository(&app) {
+        Ok(repo) => {
+            // 有激活仓库，加载该目录
+            let mut snapshot = workspace::load_workspace_from_root(&repo.root)?;
             snapshot.is_cli_launch = true;
-
-            // 添加到历史记录
-            if !snapshot.root.is_empty() && !snapshot.repo_name.is_empty() {
-                let _ = repository_history::add_repository(&cwd);
-            }
+            let _ = update_repository_history_from_workspace(&snapshot);
 
             Ok(snapshot)
         }
+        Err(err) if has_active_env => Err(err),
         Err(_) => {
             // 无 MERGEV_CWD，返回空 workspace (前端显示历史列表)
             Ok(WorkspaceSnapshot {
@@ -61,7 +152,7 @@ fn get_workspace(_app: tauri::AppHandle) -> Result<WorkspaceSnapshot, String> {
                 theirs_label: String::new(),
                 headline: String::new(),
                 files: Vec::new(),
-                total_blocks: 0,
+                total_blocks: None,
                 is_cli_launch: false,
             })
         }
@@ -79,78 +170,76 @@ fn get_recent_repositories() -> Result<Vec<RepositoryItem>, String> {
 }
 
 #[tauri::command]
-fn open_repository(_app: tauri::AppHandle, path: String) -> Result<(), String> {
+fn open_repository(app: tauri::AppHandle, path: String) -> Result<(), String> {
     let repo_path = PathBuf::from(&path);
-
-    // 验证是否为有效的 Git 仓库
-    git::resolve_repo_root(&repo_path).map_err(|e| e.to_string())?;
-
-    // 设置 MERGEV_CWD 环境变量
-    std::env::set_var("MERGEV_CWD", &path);
-
-    // 添加到历史记录
-    repository_history::add_repository(&repo_path)?;
-
+    resolve_and_cache_active_repository(&app, &repo_path)?;
     Ok(())
 }
 
 #[tauri::command]
-fn get_conflict_file(_app: tauri::AppHandle, path: String) -> Result<ConflictFileDetail, String> {
-    let cwd = std::env::var("MERGEV_CWD")
-        .map(PathBuf::from)
-        .map_err(|_| "MERGEV_CWD 未设置".to_string())?;
-    let root = git::resolve_repo_root(&cwd).map_err(|err| err.to_string())?;
-    workspace::load_conflict_file(&root, &path)
+fn activate_repository(
+    app: tauri::AppHandle,
+    path: String,
+) -> Result<ActiveRepositoryPayload, String> {
+    let repo_path = PathBuf::from(&path);
+    let repo = resolve_and_cache_active_repository(&app, &repo_path)?;
+    load_active_repository_payload(&app, &repo)
+}
+
+#[tauri::command]
+fn refresh_active_repository(app: tauri::AppHandle) -> Result<ActiveRepositoryPayload, String> {
+    let repo = active_repository(&app)?;
+    load_active_repository_payload(&app, &repo)
+}
+
+#[tauri::command]
+fn get_conflict_file(app: tauri::AppHandle, path: String) -> Result<ConflictFileDetail, String> {
+    let repo = active_repository(&app)?;
+    workspace::load_conflict_file(&repo.root, &path)
+}
+
+#[tauri::command]
+fn get_conflict_count(app: tauri::AppHandle, path: String) -> Result<usize, String> {
+    let repo = active_repository(&app)?;
+    workspace::count_conflicts_for_path(&repo.root, &path)
 }
 
 #[tauri::command]
 fn save_conflict_file(
-    _app: tauri::AppHandle,
+    app: tauri::AppHandle,
     path: String,
     decisions: Vec<String>,
     stage: bool,
 ) -> Result<ConflictFileDetail, String> {
-    let cwd = std::env::var("MERGEV_CWD")
-        .map(PathBuf::from)
-        .map_err(|_| "MERGEV_CWD 未设置".to_string())?;
-    let root = git::resolve_repo_root(&cwd).map_err(|err| err.to_string())?;
+    let repo = active_repository(&app)?;
     let parsed = decisions
         .into_iter()
         .map(|value| parse_decision(&value))
         .collect::<Result<Vec<_>, _>>()?;
-    workspace::apply_decisions_and_save(&root, &path, &parsed, stage)
+    workspace::apply_decisions_and_save(&repo.root, &path, &parsed, stage)
 }
 
 #[tauri::command]
-fn accept_file_side(_app: tauri::AppHandle, path: String, side: String) -> Result<(), String> {
-    let cwd = std::env::var("MERGEV_CWD")
-        .map(PathBuf::from)
-        .map_err(|_| "MERGEV_CWD 未设置".to_string())?;
-    let root = git::resolve_repo_root(&cwd).map_err(|err| err.to_string())?;
-    workspace::accept_file_side(&root, &path, &side)
+fn accept_file_side(app: tauri::AppHandle, path: String, side: String) -> Result<(), String> {
+    let repo = active_repository(&app)?;
+    workspace::accept_file_side(&repo.root, &path, &side)
 }
 
 #[tauri::command]
-fn get_merge_document(_app: tauri::AppHandle, path: String) -> Result<MergeDocument, String> {
-    let cwd = std::env::var("MERGEV_CWD")
-        .map(PathBuf::from)
-        .map_err(|_| "MERGEV_CWD 未设置".to_string())?;
-    let root = git::resolve_repo_root(&cwd).map_err(|err| err.to_string())?;
-    workspace::load_merge_document(&root, &path)
+fn get_merge_document(app: tauri::AppHandle, path: String) -> Result<MergeDocument, String> {
+    let repo = active_repository(&app)?;
+    workspace::load_merge_document(&repo.root, &path)
 }
 
 #[tauri::command]
 fn save_merge_result(
-    _app: tauri::AppHandle,
+    app: tauri::AppHandle,
     path: String,
     result: String,
     stage: bool,
 ) -> Result<ConflictFileDetail, String> {
-    let cwd = std::env::var("MERGEV_CWD")
-        .map(PathBuf::from)
-        .map_err(|_| "MERGEV_CWD 未设置".to_string())?;
-    let root = git::resolve_repo_root(&cwd).map_err(|err| err.to_string())?;
-    workspace::save_merge_result(&root, &path, &result, stage)
+    let repo = active_repository(&app)?;
+    workspace::save_merge_result(&repo.root, &path, &result, stage)
 }
 
 #[tauri::command]
@@ -159,7 +248,20 @@ fn close_app(app: tauri::AppHandle) {
 }
 
 #[tauri::command]
-fn remove_repository(_app: tauri::AppHandle, path: String) -> Result<(), String> {
+fn remove_repository(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    let active = active_repository(&app).ok();
+    let removed_root = git::resolve_repo_root(&PathBuf::from(&path)).ok();
+    let should_clear_active = active.as_ref().is_some_and(|repo| {
+        repo.root == PathBuf::from(&path)
+            || removed_root
+                .as_ref()
+                .is_some_and(|root| *root == repo.root)
+    });
+
+    if should_clear_active {
+        clear_active_repository(&app);
+    }
+
     repository_history::remove_repository(&path)
 }
 
@@ -220,7 +322,10 @@ pub fn run() {
             get_mergev_cwd,
             get_recent_repositories,
             open_repository,
+            activate_repository,
+            refresh_active_repository,
             get_conflict_file,
+            get_conflict_count,
             save_conflict_file,
             accept_file_side,
             get_merge_document,
@@ -297,6 +402,7 @@ pub fn run() {
             if let Some(cwd) = cwd {
                 app.manage(LaunchCwd(cwd));
             }
+            app.manage(ActiveRepositoryState::default());
 
             Ok(())
         })

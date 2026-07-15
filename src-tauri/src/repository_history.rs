@@ -3,9 +3,6 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::git;
-use crate::workspace;
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepositoryItem {
@@ -53,36 +50,37 @@ fn save_history(history: &RepositoryHistory) -> Result<(), String> {
     fs::write(&path, content).map_err(|e| format!("写入历史文件失败: {}", e))
 }
 
-pub fn add_repository(repo_path: &Path) -> Result<(), String> {
-    let root = git::resolve_repo_root(repo_path).map_err(|e| e.to_string())?;
-    let root_str = root.display().to_string();
-    let name = root
+pub fn update_repository_status(
+    repo_root: &Path,
+    branch: Option<String>,
+    has_conflicts: Option<bool>,
+) -> Result<(), String> {
+    let root_str = repo_root.display().to_string();
+    let name = repo_root
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("unknown")
         .to_string();
 
-    let branch = git::get_current_branch(&root).ok();
-    let has_conflicts = workspace::load_workspace(repo_path)
-        .ok()
-        .map(|ws| !ws.files.is_empty());
-
     let mut history = load_history()?;
+    let last_opened = chrono::Local::now().to_rfc3339();
+    let item = RepositoryItem {
+        path: root_str.clone(),
+        name,
+        last_opened,
+        branch,
+        has_conflicts,
+    };
 
-    // 移除已存在的相同路径
-    history.repositories.retain(|item| item.path != root_str);
-
-    // 添加到列表开头
-    history.repositories.insert(
-        0,
-        RepositoryItem {
-            path: root_str,
-            name,
-            last_opened: chrono::Local::now().to_rfc3339(),
-            branch,
-            has_conflicts,
-        },
-    );
+    if let Some(existing) = history
+        .repositories
+        .iter_mut()
+        .find(|existing| existing.path == root_str)
+    {
+        *existing = item;
+    } else {
+        history.repositories.insert(0, item);
+    }
 
     // 只保留最近 20 个
     if history.repositories.len() > 20 {
@@ -95,23 +93,14 @@ pub fn add_repository(repo_path: &Path) -> Result<(), String> {
 pub fn get_recent_repositories() -> Result<Vec<RepositoryItem>, String> {
     let history = load_history()?;
 
-    // 更新每个仓库的状态（分支和冲突信息）
+    // Keep this lightweight: startup should not rescan every historical repo.
     let updated: Vec<RepositoryItem> = history
         .repositories
         .into_iter()
-        .filter_map(|mut item| {
+        .filter_map(|item| {
             let path = PathBuf::from(&item.path);
             if !path.exists() {
                 return None; // 过滤掉不存在的仓库
-            }
-
-            // 尝试更新分支和冲突状态
-            if let Ok(branch) = git::get_current_branch(&path) {
-                item.branch = Some(branch);
-            }
-
-            if let Ok(ws) = workspace::load_workspace(&path) {
-                item.has_conflicts = Some(!ws.files.is_empty());
             }
 
             Some(item)

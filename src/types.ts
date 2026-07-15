@@ -38,14 +38,14 @@ export type WorkspaceSnapshot = {
   theirsLabel: string;
   headline: string;
   files: ConflictFileSummary[];
-  totalBlocks: number;
+  totalBlocks: number | null;
 };
 
 export type ConflictFileSummary = {
   path: string;
   fileName: string;
   directory: string;
-  conflictCount: number;
+  conflictCount: number | null;
   oursStatus: SideStatus;
   theirsStatus: SideStatus;
   staged: boolean;
@@ -120,6 +120,11 @@ export type RepositoryItem = {
   lastOpened: string;
   branch?: string;
   hasConflicts?: boolean;
+};
+
+export type ActiveRepositoryPayload = {
+  workspace: WorkspaceSnapshot;
+  repos: RepositoryItem[];
 };
 
 export type AppView =

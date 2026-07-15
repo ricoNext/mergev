@@ -1,6 +1,12 @@
 import { useEffect, useState, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { AppView, WorkspaceSnapshot, MergeDocument } from "./types";
+import type {
+  ActiveRepositoryPayload,
+  AppView,
+  WorkspaceSnapshot,
+  MergeDocument,
+  RepositoryItem,
+} from "./types";
 import { FirstLaunchDialog } from "./FirstLaunchDialog";
 import { RepositoriesScreen } from "./screens/RepositoriesScreen";
 import { ConflictsScreen } from "./screens/ConflictsScreen";
@@ -19,6 +25,46 @@ import {
   type Theme,
 } from "./theme";
 import "./App.css";
+
+function sortWorkspaceFiles(workspace: WorkspaceSnapshot): WorkspaceSnapshot {
+  if (workspace.files.length === 0) {
+    return workspace;
+  }
+
+  const files = [...workspace.files].sort((a, b) => {
+    const nameA = a.fileName || fileNameOf(a.path);
+    const nameB = b.fileName || fileNameOf(b.path);
+    return nameA.localeCompare(nameB);
+  });
+
+  return { ...workspace, files };
+}
+
+function firstConflictPath(workspace: WorkspaceSnapshot | null): string | null {
+  return workspace?.files.length ? workspace.files[0].path : null;
+}
+
+function withConflictCount(
+  workspace: WorkspaceSnapshot,
+  path: string,
+  conflictCount: number,
+): WorkspaceSnapshot {
+  const files = workspace.files.map((file) =>
+    file.path === path ? { ...file, conflictCount } : file,
+  );
+  const knownCounts = files
+    .map((file) => file.conflictCount)
+    .filter((count): count is number => count !== null);
+
+  return {
+    ...workspace,
+    files,
+    totalBlocks:
+      knownCounts.length === files.length
+        ? knownCounts.reduce((sum, count) => sum + count, 0)
+        : workspace.totalBlocks,
+  };
+}
 
 function App() {
   const [view, setView] = useState<AppView>({ kind: "loading" });
@@ -62,61 +108,45 @@ function App() {
       // 判断激活仓库：MERGEV_CWD > 第一个仓库
       let activeRepoPath: string | null = null;
       const mergev_cwd = await invoke<string | null>("get_mergev_cwd");
+      let workspace: WorkspaceSnapshot | null = null;
+      let repos: RepositoryItem[] = [];
 
       if (mergev_cwd) {
-        // 有 MERGEV_CWD 环境变量，直接使用它（CLI 启动场景）
-        activeRepoPath = mergev_cwd;
-      }
-
-      // 如果有激活仓库，加载其冲突列表
-      let workspace: WorkspaceSnapshot | null = null;
-      if (activeRepoPath) {
         try {
-          await invoke("open_repository", { path: activeRepoPath });
-          workspace = await invoke<WorkspaceSnapshot>("get_workspace");
-
-          // 按文件名字母排序
-          if (workspace.files.length > 0) {
-            const sortedFiles = [...workspace.files].sort((a, b) => {
-              const nameA = a.fileName || fileNameOf(a.path);
-              const nameB = b.fileName || fileNameOf(b.path);
-              return nameA.localeCompare(nameB);
-            });
-            workspace = { ...workspace, files: sortedFiles };
-          }
+          const activated = await invoke<ActiveRepositoryPayload>("activate_repository", {
+            path: mergev_cwd,
+          });
+          workspace = sortWorkspaceFiles(activated.workspace);
+          repos = activated.repos;
+          activeRepoPath = workspace.root || mergev_cwd;
         } catch (error) {
           console.error("Failed to load repository:", error);
           workspace = null;
+          activeRepoPath = null;
         }
       }
 
-      // 加载仓库列表（在 open_repository 之后，确保新仓库已加入历史）
-      const repos = await invoke<any[]>("get_recent_repositories");
-
       // 如果没有 MERGEV_CWD，使用最近打开的仓库
+      if (!activeRepoPath) {
+        repos = await invoke<RepositoryItem[]>("get_recent_repositories");
+      }
+
       if (!activeRepoPath && repos.length > 0) {
         activeRepoPath = repos[0].path;
         try {
-          await invoke("open_repository", { path: activeRepoPath });
-          workspace = await invoke<WorkspaceSnapshot>("get_workspace");
-
-          if (workspace.files.length > 0) {
-            const sortedFiles = [...workspace.files].sort((a, b) => {
-              const nameA = a.fileName || fileNameOf(a.path);
-              const nameB = b.fileName || fileNameOf(b.path);
-              return nameA.localeCompare(nameB);
-            });
-            workspace = { ...workspace, files: sortedFiles };
-          }
+          const activated = await invoke<ActiveRepositoryPayload>("activate_repository", {
+            path: activeRepoPath,
+          });
+          workspace = sortWorkspaceFiles(activated.workspace);
+          repos = activated.repos;
+          activeRepoPath = workspace.root || activeRepoPath;
         } catch (error) {
           console.error("Failed to load repository:", error);
           workspace = null;
         }
       }
 
-      const selectedFilePath = workspace?.files && workspace.files.length > 0
-        ? workspace.files[0].path
-        : null;
+      const selectedFilePath = firstConflictPath(workspace);
 
       setView({
         kind: "combined",
@@ -127,6 +157,42 @@ function App() {
         busy: false,
         actionError: null,
       });
+      if (workspace && selectedFilePath) {
+        void loadConflictCount(selectedFilePath, workspace.root);
+      }
+    } catch (error) {
+      setView({
+        kind: "error",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  async function refreshActiveRepository(preferredPath?: string) {
+    try {
+      const refreshed = await invoke<ActiveRepositoryPayload>(
+        "refresh_active_repository",
+      );
+      const workspace = sortWorkspaceFiles(refreshed.workspace);
+      const selectedFilePath =
+        preferredPath &&
+        workspace.files.some((file) => file.path === preferredPath)
+          ? preferredPath
+          : firstConflictPath(workspace);
+
+      setView({
+        kind: "combined",
+        repos: refreshed.repos,
+        activeRepoPath: workspace.root,
+        workspace,
+        selectedFilePath,
+        busy: false,
+        actionError: null,
+      });
+
+      if (selectedFilePath) {
+        void loadConflictCount(selectedFilePath, workspace.root);
+      }
     } catch (error) {
       setView({
         kind: "error",
@@ -152,7 +218,26 @@ function App() {
 
     try {
       await invoke("remove_repository", { path: repoPath });
-      await loadInitial();
+      const repos = await invoke<RepositoryItem[]>("get_recent_repositories");
+      setView((current) => {
+        if (current.kind !== "combined") {
+          return current;
+        }
+
+        const removedActive =
+          current.activeRepoPath === repoPath ||
+          current.workspace?.root === repoPath;
+
+        return {
+          ...current,
+          repos,
+          activeRepoPath: removedActive ? null : current.activeRepoPath,
+          workspace: removedActive ? null : current.workspace,
+          selectedFilePath: removedActive ? null : current.selectedFilePath,
+          busy: false,
+          actionError: null,
+        };
+      });
     } catch (error) {
       console.error("Failed to remove repository:", error);
     }
@@ -175,8 +260,23 @@ function App() {
       const path = selected;
 
       try {
-        await invoke("open_repository", { path });
-        await loadInitial();
+        const activated = await invoke<ActiveRepositoryPayload>("activate_repository", {
+          path,
+        });
+        const workspace = sortWorkspaceFiles(activated.workspace);
+        setView({
+          kind: "combined",
+          repos: activated.repos,
+          activeRepoPath: workspace.root || path,
+          workspace,
+          selectedFilePath: firstConflictPath(workspace),
+          busy: false,
+          actionError: null,
+        });
+        const selectedFilePath = firstConflictPath(workspace);
+        if (selectedFilePath) {
+          void loadConflictCount(selectedFilePath, workspace.root);
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         await confirm(message, {
@@ -191,6 +291,67 @@ function App() {
     }
   }
 
+  async function loadConflictCount(path: string, workspaceRoot: string) {
+    try {
+      const conflictCount = await invoke<number>("get_conflict_count", { path });
+      setView((current) => {
+        if (
+          current.kind === "combined" &&
+          current.workspace?.root === workspaceRoot
+        ) {
+          return {
+            ...current,
+            workspace: withConflictCount(current.workspace, path, conflictCount),
+          };
+        }
+
+        if (
+          current.kind === "conflicts" &&
+          current.workspace.root === workspaceRoot
+        ) {
+          return {
+            ...current,
+            workspace: withConflictCount(current.workspace, path, conflictCount),
+          };
+        }
+
+        if (
+          current.kind === "merge" &&
+          current.workspace.root === workspaceRoot
+        ) {
+          return {
+            ...current,
+            workspace: withConflictCount(current.workspace, path, conflictCount),
+          };
+        }
+
+        return current;
+      });
+    } catch (error) {
+      console.error("Failed to load conflict count:", error);
+    }
+  }
+
+  function selectCombinedFile(path: string) {
+    if (view.kind !== "combined") {
+      return;
+    }
+
+    setView({ ...view, selectedFilePath: path, actionError: null });
+    if (view.workspace) {
+      void loadConflictCount(path, view.workspace.root);
+    }
+  }
+
+  function selectConflictFile(path: string) {
+    if (view.kind !== "conflicts") {
+      return;
+    }
+
+    setView({ ...view, selectedPath: path, actionError: null });
+    void loadConflictCount(path, view.workspace.root);
+  }
+
   async function loadConflicts(preferredPath?: string) {
     setView({ kind: "loading" });
     try {
@@ -200,26 +361,22 @@ function App() {
         return;
       }
 
-      // 按文件名字母排序
-      const sortedFiles = [...workspace.files].sort((a, b) => {
-        const nameA = a.fileName || fileNameOf(a.path);
-        const nameB = b.fileName || fileNameOf(b.path);
-        return nameA.localeCompare(nameB);
-      });
+      const sortedWorkspace = sortWorkspaceFiles(workspace);
 
       const selectedPath =
         preferredPath &&
-        sortedFiles.some((file) => file.path === preferredPath)
+        sortedWorkspace.files.some((file) => file.path === preferredPath)
           ? preferredPath
-          : sortedFiles[0].path;
+          : sortedWorkspace.files[0].path;
 
       setView({
         kind: "conflicts",
-        workspace: { ...workspace, files: sortedFiles },
+        workspace: sortedWorkspace,
         selectedPath,
         busy: false,
         actionError: null,
       });
+      void loadConflictCount(selectedPath, sortedWorkspace.root);
     } catch (error) {
       setView({
         kind: "error",
@@ -236,28 +393,24 @@ function App() {
     setView({ ...view, activeRepoPath: repoPath, busy: true, actionError: null });
 
     try {
-      await invoke("open_repository", { path: repoPath });
-      const workspace = await invoke<WorkspaceSnapshot>("get_workspace");
-
-      // 按文件名字母排序
-      const sortedFiles = workspace.files.length > 0
-        ? [...workspace.files].sort((a, b) => {
-            const nameA = a.fileName || fileNameOf(a.path);
-            const nameB = b.fileName || fileNameOf(b.path);
-            return nameA.localeCompare(nameB);
-          })
-        : [];
-
-      const selectedFilePath = sortedFiles.length > 0 ? sortedFiles[0].path : null;
+      const activated = await invoke<ActiveRepositoryPayload>("activate_repository", {
+        path: repoPath,
+      });
+      const workspace = sortWorkspaceFiles(activated.workspace);
 
       setView({
         ...view,
-        activeRepoPath: repoPath,
-        workspace: { ...workspace, files: sortedFiles },
-        selectedFilePath,
+        repos: activated.repos,
+        activeRepoPath: workspace.root || repoPath,
+        workspace,
+        selectedFilePath: firstConflictPath(workspace),
         busy: false,
         actionError: null,
       });
+      const selectedFilePath = firstConflictPath(workspace);
+      if (selectedFilePath) {
+        void loadConflictCount(selectedFilePath, workspace.root);
+      }
     } catch (error) {
       setView({
         ...view,
@@ -270,8 +423,23 @@ function App() {
   async function openRepository(repoPath: string) {
     setView({ kind: "loading" });
     try {
-      await invoke("open_repository", { path: repoPath });
-      await loadConflicts();
+      const activated = await invoke<ActiveRepositoryPayload>("activate_repository", {
+        path: repoPath,
+      });
+      const workspace = sortWorkspaceFiles(activated.workspace);
+      setView({
+        kind: "combined",
+        repos: activated.repos,
+        activeRepoPath: workspace.root || repoPath,
+        workspace,
+        selectedFilePath: firstConflictPath(workspace),
+        busy: false,
+        actionError: null,
+      });
+      const selectedFilePath = firstConflictPath(workspace);
+      if (selectedFilePath) {
+        void loadConflictCount(selectedFilePath, workspace.root);
+      }
     } catch (error) {
       setView({
         kind: "error",
@@ -302,9 +470,14 @@ function App() {
       const document = await invoke<MergeDocument>("get_merge_document", {
         path,
       });
+      const workspaceWithCount = withConflictCount(
+        workspace,
+        path,
+        document.unresolvedCount,
+      );
       setView({
         kind: "merge",
-        workspace,
+        workspace: workspaceWithCount,
         selectedPath: path,
         session: buildSessionFromDocument(document),
         detailError: null,
@@ -364,7 +537,6 @@ function App() {
       <RepositoriesScreen
         view={view}
         onOpenRepository={(path) => void openRepository(path)}
-        onRefresh={() => void loadInitial()}
         onClose={() => void invoke("close_app")}
       />
     );
@@ -396,10 +568,7 @@ function App() {
         theme={theme}
         onToggleTheme={toggleTheme}
         onSwitchRepository={(path) => void switchRepository(path)}
-        onSelect={(path) =>
-          setView({ ...view, selectedFilePath: path, actionError: null })
-        }
-        onRefresh={() => void loadInitial()}
+        onSelect={selectCombinedFile}
         onRemoveRepository={(path) => void removeRepository(path)}
         onAddRepository={() => void addRepository()}
         onAccept={async (side) => {
@@ -435,7 +604,7 @@ function App() {
               stage: true,
             });
 
-            await switchRepository(view.activeRepoPath!);
+            await refreshActiveRepository(view.selectedFilePath);
           } catch (error) {
             setView({
               ...view,
@@ -456,9 +625,7 @@ function App() {
     return (
       <ConflictsScreen
         view={view}
-        onSelect={(path) =>
-          setView({ ...view, selectedPath: path, actionError: null })
-        }
+        onSelect={selectConflictFile}
         onRefresh={() => void loadConflicts(view.selectedPath)}
         onAccept={async (side) => {
           setView({ ...view, busy: true, actionError: null });
@@ -516,11 +683,11 @@ function App() {
       view={view}
       onBack={() => {
         if (view.kind === "merge") {
-          void loadInitial();
+          void refreshActiveRepository(view.selectedPath);
         }
       }}
       onChangeView={setView}
-      onSaved={() => void loadInitial()}
+      onSaved={() => void refreshActiveRepository(view.selectedPath)}
     />
   );
 }

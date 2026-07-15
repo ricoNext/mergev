@@ -5,12 +5,10 @@ import { useHomeDir } from "../hooks/useHomeDir";
 export function RepositoriesScreen({
   view,
   onOpenRepository,
-  onRefresh,
   onClose,
 }: {
   view: Extract<AppView, { kind: "repositories" }>;
   onOpenRepository: (path: string) => void;
-  onRefresh: () => void;
   onClose: () => void;
 }) {
   const { repos } = view;
@@ -23,9 +21,6 @@ export function RepositoriesScreen({
           <h1>Recent Repositories</h1>
           <p className="muted">选择一个仓库查看冲突</p>
         </div>
-        <button type="button" className="ghost" onClick={onRefresh}>
-          刷新
-        </button>
       </header>
 
       <div className="repositories-body">

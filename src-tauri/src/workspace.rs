@@ -3,8 +3,6 @@ use std::process::Command;
 
 use serde::Serialize;
 
-use crate::git::{resolve_repo_root, RepoError};
-
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceSnapshot {
@@ -17,7 +15,7 @@ pub struct WorkspaceSnapshot {
     pub theirs_label: String,
     pub headline: String,
     pub files: Vec<ConflictFileSummary>,
-    pub total_blocks: usize,
+    pub total_blocks: Option<usize>,
     pub is_cli_launch: bool,  // 新增：标识是否通过 CLI 启动
 }
 
@@ -27,7 +25,7 @@ pub struct ConflictFileSummary {
     pub path: String,
     pub file_name: String,
     pub directory: String,
-    pub conflict_count: usize,
+    pub conflict_count: Option<usize>,
     pub ours_status: SideStatus,
     pub theirs_status: SideStatus,
     pub staged: bool,
@@ -182,8 +180,11 @@ enum Segment {
     Conflict { ours: String, theirs: String },
 }
 
-pub fn load_workspace(cwd: &Path) -> Result<WorkspaceSnapshot, String> {
-    let root = resolve_repo_root(cwd).map_err(repo_error_to_string)?;
+pub fn load_workspace_from_root(root: &Path) -> Result<WorkspaceSnapshot, String> {
+    load_workspace_with_root(root, root)
+}
+
+fn load_workspace_with_root(cwd: &Path, root: &Path) -> Result<WorkspaceSnapshot, String> {
     let root_str = root.to_string_lossy().to_string();
     let repo_name = root
         .file_name()
@@ -196,8 +197,6 @@ pub fn load_workspace(cwd: &Path) -> Result<WorkspaceSnapshot, String> {
     let (ours_label, theirs_label) = side_labels(&root, operation, &branch);
     let headline = build_headline(operation, &ours_label, &theirs_label);
     let files = list_conflict_files(&root)?;
-    let total_blocks = files.iter().map(|file| file.conflict_count).sum();
-
     Ok(WorkspaceSnapshot {
         cwd: cwd.display().to_string(),
         root: root_str,
@@ -208,7 +207,7 @@ pub fn load_workspace(cwd: &Path) -> Result<WorkspaceSnapshot, String> {
         theirs_label,
         headline,
         files,
-        total_blocks,
+        total_blocks: None,
         is_cli_launch: false,  // 默认值，由调用方设置
     })
 }
@@ -260,6 +259,11 @@ pub fn load_conflict_file(root: &Path, path: &str) -> Result<ConflictFileDetail,
         result,
         unresolved_count,
     })
+}
+
+pub fn count_conflicts_for_path(root: &Path, path: &str) -> Result<usize, String> {
+    let working = read_working_tree_file(root, path).unwrap_or_default();
+    Ok(count_merge_conflicts(root, path, &working))
 }
 
 pub fn apply_decisions_and_save(
@@ -1537,23 +1541,19 @@ fn count_merge_conflicts(root: &Path, path: &str, working: &str) -> usize {
 }
 
 fn list_conflict_files(root: &Path) -> Result<Vec<ConflictFileSummary>, String> {
-    let output = git_stdout(root, &["diff", "--name-only", "--diff-filter=U"])?;
-    if output.is_empty() {
+    let stage_entries = unmerged_stage_entries(root)?;
+    if stage_entries.is_empty() {
         return Ok(Vec::new());
     }
 
-    let stage_map = unmerged_stage_map(root)?;
     let mut files = Vec::new();
-    for path in output.lines().filter(|line| !line.is_empty()) {
-        let working = read_working_tree_file(root, path).unwrap_or_default();
-        let conflict_count = count_merge_conflicts(root, path, &working);
-        let stages = stage_map.get(path).copied().unwrap_or_default();
-        let (file_name, directory) = split_path(path);
+    for (path, stages) in stage_entries {
+        let (file_name, directory) = split_path(&path);
         files.push(ConflictFileSummary {
-            path: path.to_string(),
+            path,
             file_name,
             directory,
-            conflict_count,
+            conflict_count: None,
             // Align with WebStorm: stage present → Modified, missing → Deleted.
             // Base (stage 1) is not used to distinguish Added vs Modified.
             ours_status: side_status(stages.has_ours),
@@ -1570,25 +1570,35 @@ struct StageFlags {
     has_theirs: bool,
 }
 
-fn unmerged_stage_map(
-    root: &Path,
-) -> Result<std::collections::HashMap<String, StageFlags>, String> {
+fn unmerged_stage_entries(root: &Path) -> Result<Vec<(String, StageFlags)>, String> {
     let output = git_stdout(root, &["ls-files", "-u"])?;
-    let mut map = std::collections::HashMap::new();
+    let mut entries = Vec::new();
+    let mut indexes = std::collections::HashMap::new();
+
     for line in output.lines().filter(|line| !line.is_empty()) {
         // format: <mode> <sha> <stage>\t<path>
         let Some((meta, path)) = line.split_once('\t') else {
             continue;
         };
         let stage = meta.split_whitespace().nth(2).unwrap_or("0");
-        let entry = map.entry(path.to_string()).or_insert(StageFlags::default());
+        let index = if let Some(index) = indexes.get(path).copied() {
+            index
+        } else {
+            let index = entries.len();
+            entries.push((path.to_string(), StageFlags::default()));
+            indexes.insert(path.to_string(), index);
+            index
+        };
+        let entry = &mut entries[index].1;
+
         match stage {
             "2" => entry.has_ours = true,
             "3" => entry.has_theirs = true,
             _ => {}
         }
     }
-    Ok(map)
+
+    Ok(entries)
 }
 
 fn side_status(has_side: bool) -> SideStatus {
@@ -1617,6 +1627,14 @@ fn build_headline(operation: GitOperation, ours: &str, theirs: &str) -> String {
 }
 
 fn resolve_git_dir(root: &Path) -> PathBuf {
+    if let (Ok(active_root), Ok(active_git_dir)) =
+        (std::env::var("MERGEV_CWD"), std::env::var("MERGEV_GIT_DIR"))
+    {
+        if PathBuf::from(active_root) == root {
+            return PathBuf::from(active_git_dir);
+        }
+    }
+
     let git_dir = PathBuf::from(
         git_stdout(root, &["rev-parse", "--git-dir"]).unwrap_or_else(|_| ".git".into()),
     );
@@ -2032,10 +2050,6 @@ fn git_command(root: &Path, args: &[&str]) -> Result<std::process::Output, Strin
             err.to_string()
         }
     })
-}
-
-fn repo_error_to_string(err: RepoError) -> String {
-    err.to_string()
 }
 
 #[cfg(test)]
