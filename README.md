@@ -1,5 +1,7 @@
 # Mergev
 
+一个从终端启动的跨平台 Git 冲突解决器，用三栏界面直观看 Yours、Theirs 和最终 Result。
+
 <div align="center">
 
 [![CI](https://github.com/ricoNext/mergev/actions/workflows/ci.yml/badge.svg)](https://github.com/ricoNext/mergev/actions/workflows/ci.yml)
