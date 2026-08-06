@@ -309,7 +309,6 @@ export function ConflictLinkGutter({
 		}
 
 		let raf = 0;
-		const sideGeometry = buildPaneGeometry(sidePane);
 		const resultGeometry = buildPaneGeometry(resultPane);
 		const sidePositions = rowPositionMap(sideRows);
 		const resultPositions = rowPositionMap(resultRows);
