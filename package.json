@@ -6,7 +6,7 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "dev": "MERGEV_CWD=/Users/ricolee/Desktop/rico/md tauri dev",
+    "dev": "tauri dev",
     "vite": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
