@@ -467,7 +467,7 @@ export function ConflictLinkGutter({
 		<div
 			ref={gutterRef}
 			className={`conflict-link-gutter gutter-${side}`}
-			aria-label={side === "ours" ? "Yours 冲突连接" : "Theirs 冲突连接"}
+			aria-label={side === "ours" ? "当前冲突连接" : "对方冲突连接"}
 		>
 			<svg
 				className="conflict-link-svg"

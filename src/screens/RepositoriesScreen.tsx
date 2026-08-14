@@ -18,7 +18,7 @@ export function RepositoriesScreen({
     <div className="repositories">
       <header className="conflicts-header">
         <div>
-          <h1>Recent Repositories</h1>
+          <h1>最近仓库</h1>
           <p className="muted">选择一个仓库查看冲突</p>
         </div>
       </header>
@@ -49,7 +49,7 @@ export function RepositoriesScreen({
           className="close-app-button"
           onClick={onClose}
         >
-          Close
+          关闭
         </button>
       </div>
     </div>

@@ -1,8 +1,8 @@
 import type { SideStatus } from "../types";
 
 const SIDE_STATUS_LABEL: Record<SideStatus, string> = {
-  modified: "Modified",
-  deleted: "Deleted",
+  modified: "已修改",
+  deleted: "已删除",
 };
 
 export function StatusCell({

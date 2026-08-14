@@ -15,9 +15,9 @@ export function InlineConflictActions({
   ) => void;
 }) {
   const acceptTitle =
-    side === "ours" ? "Accept Yours (1)" : "Accept Theirs (2)";
+    side === "ours" ? "接受当前 (1)" : "接受对方 (2)";
   const ignoreTitle =
-    side === "ours" ? "Ignore Yours" : "Ignore Theirs";
+    side === "ours" ? "忽略当前" : "忽略对方";
 
   if (side === "ours") {
     return (

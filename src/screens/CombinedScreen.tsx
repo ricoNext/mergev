@@ -61,7 +61,7 @@ export function CombinedScreen({
     <div className="combined-view">
       <aside className="repository-sidebar">
         <header className="sidebar-header">
-          <h2>Repositories</h2>
+          <h2>仓库</h2>
           <div className="sidebar-header-actions">
             <button type="button" className="ghost" onClick={onAddRepository}>
               新增项目
@@ -180,9 +180,9 @@ export function CombinedScreen({
                 <table className="conflicts-table">
                   <thead>
                     <tr>
-                      <th>Name</th>
-                      <th>Yours ({workspace.oursLabel})</th>
-                      <th>Theirs ({workspace.theirsLabel})</th>
+                      <th>文件名</th>
+                      <th>当前 ({workspace.oursLabel})</th>
+                      <th>对方 ({workspace.theirsLabel})</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -230,14 +230,14 @@ export function CombinedScreen({
                   disabled={busy || !selectedFile}
                   onClick={() => void onAccept("ours")}
                 >
-                  Accept Yours
+                  接受当前
                 </button>
                 <button
                   type="button"
                   disabled={busy || !selectedFile}
                   onClick={() => void onAccept("theirs")}
                 >
-                  Accept Theirs
+                  接受对方
                 </button>
                 <button
                   type="button"
@@ -245,16 +245,14 @@ export function CombinedScreen({
                   disabled={busy || !selectedFile}
                   onClick={onMerge}
                 >
-                  Merge…
+                  开始合并
                 </button>
                 {actionError ? <p className="error">{actionError}</p> : null}
                 {selectedFile ? (
                   <p className="muted action-hint">
                     {selectedFile.conflictCount === null
                       ? "正在计算冲突块…"
-                      : `${selectedFile.conflictCount} conflict block${
-                          selectedFile.conflictCount === 1 ? "" : "s"
-                        }`}
+                      : `${selectedFile.conflictCount} 个冲突块`}
                   </p>
                 ) : null}
               </aside>

@@ -28,7 +28,7 @@ export function ConflictsScreen({
     <div className="conflicts">
       <header className="conflicts-header">
         <div>
-          <h1>Conflicts</h1>
+          <h1>冲突</h1>
           <p className="muted">{workspace.headline}</p>
         </div>
         <button type="button" className="ghost" onClick={onRefresh}>
@@ -41,9 +41,9 @@ export function ConflictsScreen({
           <table className="conflicts-table">
             <thead>
               <tr>
-                <th>Name</th>
-                <th>Yours ({workspace.oursLabel})</th>
-                <th>Theirs ({workspace.theirsLabel})</th>
+                <th>文件名</th>
+                <th>当前 ({workspace.oursLabel})</th>
+                <th>对方 ({workspace.theirsLabel})</th>
               </tr>
             </thead>
             <tbody>
@@ -91,14 +91,14 @@ export function ConflictsScreen({
             disabled={busy || !selected}
             onClick={() => void onAccept("ours")}
           >
-            Accept Yours
+            接受当前
           </button>
           <button
             type="button"
             disabled={busy || !selected}
             onClick={() => void onAccept("theirs")}
           >
-            Accept Theirs
+            接受对方
           </button>
           <button
             type="button"
@@ -106,20 +106,18 @@ export function ConflictsScreen({
             disabled={busy || !selected}
             onClick={onMerge}
           >
-            Merge…
+            开始合并
           </button>
           {actionError ? <p className="error">{actionError}</p> : null}
           {selected ? (
             <p className="muted action-hint">
               {selected.conflictCount === null
                 ? "正在计算冲突块…"
-                : `${selected.conflictCount} conflict block${
-                    selected.conflictCount === 1 ? "" : "s"
-                  }`}
+                : `${selected.conflictCount} 个冲突块`}
             </p>
           ) : null}
           <button type="button" className="close-app-button" onClick={onClose}>
-            Close
+            关闭
           </button>
         </aside>
       </div>

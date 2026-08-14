@@ -1618,11 +1618,11 @@ fn split_path(path: &str) -> (String, String) {
 
 fn build_headline(operation: GitOperation, ours: &str, theirs: &str) -> String {
     match operation {
-        GitOperation::Merge => format!("Merging branch {theirs} into branch {ours}"),
-        GitOperation::Rebase => format!("Rebasing {ours} onto {theirs}"),
-        GitOperation::CherryPick => format!("Cherry-picking into {ours}"),
-        GitOperation::Revert => format!("Reverting in {ours}"),
-        GitOperation::None => format!("Conflicts in {ours}"),
+        GitOperation::Merge => format!("正在将分支 {theirs} 合并到 {ours}"),
+        GitOperation::Rebase => format!("正在将 {ours} 变基到 {theirs}"),
+        GitOperation::CherryPick => format!("正在向 {ours} 拣选提交"),
+        GitOperation::Revert => format!("正在 {ours} 中还原"),
+        GitOperation::None => format!("{ours} 中存在冲突"),
     }
 }
 
@@ -1677,6 +1677,12 @@ fn is_opaque_ref_label(label: &str) -> bool {
             | "incoming"
             | "theirs"
             | "undefined"
+            | "目标"
+            | "变基中"
+            | "传入"
+            | "对方"
+            | "拣选"
+            | "还原"
     )
 }
 
@@ -1801,7 +1807,7 @@ fn resolve_merge_theirs_label(root: &Path) -> String {
     if let Some(name) = name_rev_label(root, "MERGE_HEAD") {
         return name;
     }
-    short_commit(root, "MERGE_HEAD").unwrap_or_else(|| "incoming".into())
+    short_commit(root, "MERGE_HEAD").unwrap_or_else(|| "传入".into())
 }
 
 fn resolve_rebase_onto_label(root: &Path) -> Option<String> {
@@ -1832,7 +1838,7 @@ fn resolve_rebase_head_label(root: &Path) -> Option<String> {
 fn side_labels(root: &Path, operation: GitOperation, branch: &str) -> (String, String) {
     let ours = match operation {
         GitOperation::Rebase => resolve_rebase_onto_label(root)
-            .unwrap_or_else(|| "onto".to_string()),
+            .unwrap_or_else(|| "目标".to_string()),
         _ if is_opaque_ref_label(branch) => name_rev_label(root, "HEAD")
             .or_else(|| short_commit(root, "HEAD"))
             .unwrap_or_else(|| branch.to_string()),
@@ -1842,14 +1848,14 @@ fn side_labels(root: &Path, operation: GitOperation, branch: &str) -> (String, S
     let theirs = match operation {
         GitOperation::Merge => resolve_merge_theirs_label(root),
         GitOperation::Rebase => resolve_rebase_head_label(root)
-            .unwrap_or_else(|| "rebasing".to_string()),
+            .unwrap_or_else(|| "变基中".to_string()),
         GitOperation::CherryPick => name_rev_label(root, "CHERRY_PICK_HEAD")
             .or_else(|| short_commit(root, "CHERRY_PICK_HEAD"))
-            .unwrap_or_else(|| "cherry-pick".into()),
+            .unwrap_or_else(|| "拣选".into()),
         GitOperation::Revert => name_rev_label(root, "REVERT_HEAD")
             .or_else(|| short_commit(root, "REVERT_HEAD"))
-            .unwrap_or_else(|| "revert".into()),
-        GitOperation::None => "theirs".to_string(),
+            .unwrap_or_else(|| "还原".into()),
+        GitOperation::None => "对方".to_string(),
     };
 
     (ours, theirs)

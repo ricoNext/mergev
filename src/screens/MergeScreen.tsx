@@ -594,12 +594,12 @@ export function MergeScreen({
 							<span className="muted">{session.document.path}</span>
 							<span className="topbar-stats">
 								{unresolvedChanges === 0
-									? "No changes"
-									: `${unresolvedChanges} change${unresolvedChanges !== 1 ? "s" : ""}`}
+									? "无改动"
+									: `${unresolvedChanges} 处改动`}
 								{" · "}
 								{unresolvedConflictBlocks === 0
-									? "No conflicts"
-									: `${unresolvedConflictBlocks} conflict${unresolvedConflictBlocks !== 1 ? "s" : ""}`}
+									? "无冲突"
+									: `${unresolvedConflictBlocks} 个冲突`}
 							</span>
 						</>
 					) : null}
@@ -607,7 +607,7 @@ export function MergeScreen({
 					unresolvedConflicts.length === 0 &&
 					session.conflicts.length > 0 ? (
 						<span className="topbar-success">
-							✓ All changes have been processed
+							✓ 所有改动已处理完毕
 							<button
 								type="button"
 								className="topbar-success-action"
@@ -633,11 +633,11 @@ export function MergeScreen({
 					<>
 						<div className="merge-shell">
 							<div className="merge-headers">
-								<div className="pane-title">Yours · {oursLabel}</div>
+								<div className="pane-title">当前 · {oursLabel}</div>
 								<div className="pane-title-gutter" aria-hidden="true" />
-								<div className="pane-title">Result</div>
+								<div className="pane-title">结果</div>
 								<div className="pane-title-gutter" aria-hidden="true" />
-								<div className="pane-title">Theirs · {theirsLabel}</div>
+								<div className="pane-title">对方 · {theirsLabel}</div>
 							</div>
 							<div className="merge-scroll" ref={scrollRef}>
 								<MergeGrid
@@ -658,14 +658,14 @@ export function MergeScreen({
 									disabled={session.conflicts.length === 0 || view.saving}
 									onClick={() => void acceptAllSide("ours")}
 								>
-									Accept Left
+									全部接受左侧
 								</button>
 								<button
 									type="button"
 									disabled={session.conflicts.length === 0 || view.saving}
 									onClick={() => void acceptAllSide("theirs")}
 								>
-									Accept Right
+									全部接受右侧
 								</button>
 							</div>
 							<div className="bottombar-status">
