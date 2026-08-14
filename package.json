@@ -1,7 +1,7 @@
 {
   "name": "mergev",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Git merge conflict resolver with a three-pane visual workflow.",
   "license": "MIT",
   "type": "module",
