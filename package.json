@@ -1,42 +1,22 @@
 {
-  "name": "mergev",
+  "name": "mergev-workspace",
   "private": true,
-  "version": "1.0.1",
-  "description": "Git merge conflict resolver with a three-pane visual workflow.",
-  "license": "MIT",
   "type": "module",
+  "workspaces": [
+    "apps/desktop",
+    "apps/vscode",
+    "packages/merge-ui"
+  ],
   "scripts": {
-    "dev": "tauri dev",
-    "vite": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview",
-    "tauri": "tauri",
-    "tauri:build": "tauri build",
-    "release": "bun scripts/release.ts",
-    "test": "vitest",
-    "test:ui": "vitest --ui",
-    "test:coverage": "vitest run --coverage"
-  },
-  "dependencies": {
-    "@tauri-apps/api": "^2",
-    "@tauri-apps/plugin-dialog": "^2.7.1",
-    "@tauri-apps/plugin-opener": "^2",
-    "react": "^19.1.0",
-    "react-dom": "^19.1.0",
-    "shiki": "^4.3.1"
-  },
-  "devDependencies": {
-    "@tauri-apps/cli": "^2",
-    "@testing-library/jest-dom": "^6.9.1",
-    "@testing-library/react": "^16.3.2",
-    "@types/react": "^19.1.8",
-    "@types/react-dom": "^19.1.6",
-    "@vitejs/plugin-react": "^4.6.0",
-    "@vitest/coverage-v8": "^3.0.0",
-    "@vitest/ui": "^3.0.0",
-    "jsdom": "^25.0.0",
-    "typescript": "~5.8.3",
-    "vite": "^7.0.4",
-    "vitest": "^3.0.0"
+    "dev:desktop": "bun run --filter mergev-desktop dev",
+    "build:desktop": "bun run --filter mergev-desktop build",
+    "build:vscode": "bun run --filter mergev-vscode compile",
+    "build": "bun run build:desktop && bun run build:vscode",
+    "test": "bun run --filter @mergev/merge-ui test",
+    "test:coverage": "bun run --filter @mergev/merge-ui test:coverage",
+    "check:rust": "cargo check --workspace",
+    "package:vscode": "bun run --filter mergev-vscode package",
+    "release:desktop": "bun scripts/release-desktop.ts",
+    "release:vscode": "bun scripts/release-vscode.ts"
   }
 }

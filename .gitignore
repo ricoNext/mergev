@@ -41,11 +41,12 @@ jspm_packages/
 # Build outputs
 dist
 dist-ssr
+target/
 *.local
 
 # Tauri mobile icon outputs are not used by this desktop-only app
-src-tauri/icons/android/
-src-tauri/icons/ios/
+apps/desktop/src-tauri/icons/android/
+apps/desktop/src-tauri/icons/ios/
 
 # Editor directories and files
 .vscode/*
@@ -73,6 +74,10 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
 
+apps/vscode/.vsix-staging/
+apps/vscode/*.vsix
+apps/vscode/bin/
+apps/vscode/media/merge-webview*
 
 docs/
 post-to-wechat/

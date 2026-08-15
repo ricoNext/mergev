@@ -1,0 +1,200 @@
+{
+  "name": "mergev-vscode",
+  "displayName": "mergev",
+  "description": "使用 mergev 三栏界面解决 Git 冲突",
+  "version": "0.0.3",
+  "publisher": "riconext",
+  "license": "MIT",
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#17483d",
+    "theme": "dark"
+  },
+  "homepage": "https://github.com/ricoNext/mergev",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ricoNext/mergev.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ricoNext/mergev/issues"
+  },
+  "keywords": [
+    "git",
+    "merge",
+    "conflict",
+    "scm",
+    "diff"
+  ],
+  "extensionKind": [
+    "ui"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false
+    },
+    "virtualWorkspaces": false
+  },
+  "engines": {
+    "vscode": ">=1.85.0"
+  },
+  "categories": [
+    "SCM Providers",
+    "Other"
+  ],
+  "main": "dist/extension.js",
+  "activationEvents": [
+    "onView:mergev.conflicts",
+    "onCustomEditor:mergev.mergeEditor",
+    "onCommand:mergev.openConflict"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "mergev",
+          "title": "mergev",
+          "icon": "media/mergev.svg"
+        }
+      ]
+    },
+    "views": {
+      "mergev": [
+        {
+          "id": "mergev.conflicts",
+          "name": "冲突文件",
+          "visibility": "visible"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "mergev.openConflict",
+        "title": "使用 mergev 打开"
+      },
+      {
+        "command": "mergev.refreshRepository",
+        "title": "刷新仓库",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "mergev.copyPath",
+        "title": "复制路径"
+      },
+      {
+        "command": "mergev.copyBranch",
+        "title": "复制分支"
+      },
+      {
+        "command": "mergev.openTerminal",
+        "title": "在终端中打开"
+      },
+      {
+        "command": "mergev.acceptYours",
+        "title": "Accept Yours"
+      },
+      {
+        "command": "mergev.acceptTheirs",
+        "title": "Accept Theirs"
+      },
+      {
+        "command": "mergev.retryRepository",
+        "title": "重试"
+      }
+    ],
+    "customEditors": [
+      {
+        "viewType": "mergev.mergeEditor",
+        "displayName": "mergev",
+        "selector": [
+          {
+            "filenamePattern": "*.mergev"
+          }
+        ],
+        "priority": "option"
+      }
+    ],
+    "menus": {
+      "view/item/context": [
+        {
+          "command": "mergev.refreshRepository",
+          "when": "view == mergev.conflicts && viewItem == mergev.repository",
+          "group": "inline"
+        },
+        {
+          "command": "mergev.copyPath",
+          "when": "view == mergev.conflicts && viewItem == mergev.repository"
+        },
+        {
+          "command": "mergev.copyBranch",
+          "when": "view == mergev.conflicts && viewItem == mergev.repository"
+        },
+        {
+          "command": "mergev.openTerminal",
+          "when": "view == mergev.conflicts && viewItem == mergev.repository"
+        },
+        {
+          "command": "mergev.openConflict",
+          "when": "view == mergev.conflicts && viewItem == mergev.conflictFile"
+        },
+        {
+          "command": "mergev.acceptYours",
+          "when": "view == mergev.conflicts && viewItem == mergev.conflictFile"
+        },
+        {
+          "command": "mergev.acceptTheirs",
+          "when": "view == mergev.conflicts && viewItem == mergev.conflictFile"
+        },
+        {
+          "command": "mergev.retryRepository",
+          "when": "view == mergev.conflicts && viewItem == mergev.repositoryError"
+        }
+      ],
+      "scm/resourceState/context": [
+        {
+          "command": "mergev.openConflict",
+          "when": "scmProvider == git && scmResourceGroup == merge",
+          "group": "inline"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "mergev",
+      "properties": {
+        "mergev.gitPath": {
+          "type": "string",
+          "default": "",
+          "description": "Git 可执行文件路径（留空使用 PATH）"
+        },
+        "mergev.sidecarPath": {
+          "type": "string",
+          "default": "",
+          "description": "内部测试用 sidecar 路径"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build:sidecar": "node build-sidecar.mjs",
+    "compile": "bun run typecheck && bun run build.mjs",
+    "package": "bun run build:sidecar && bun run typecheck && bun run package-local.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^18.19.130",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+	"@mergev/merge-ui": "file:../../packages/merge-ui",
+    "@shikijs/core": "^4.4.3",
+    "@shikijs/engine-javascript": "^4.4.3",
+    "@shikijs/langs": "^4.4.3",
+    "@shikijs/themes": "^4.4.3",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  }
+}

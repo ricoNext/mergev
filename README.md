@@ -22,6 +22,18 @@ mergev 是一个专注于 Git 冲突解决的桌面工具。它把难读的冲�
 
 如果你习惯在终端里 `merge`、`rebase`、`cherry-pick`，但不想在冲突出现时靠肉眼编辑 `<<<<<<<`、`=======`、`>>>>>>>`，mergev 就是为这个时刻准备的。
 
+## 仓库结构
+
+本仓库使用 monorepo 管理桌面端和 VS Code 插件。两者可独立构建、打包与发布，共享的界面与 Rust 核心只维护一份。
+
+```text
+apps/desktop/       Tauri 桌面端
+apps/vscode/        VS Code 插件与 Rust sidecar
+packages/merge-ui/  跨宿主复用的 React 合并界面与纯前端逻辑
+crates/mergev-core/ 跨宿主复用的 Rust Git 与合并核心
+scripts/            独立发布脚本
+```
+
 ## 为什么用 mergev
 
 ![](https://neptune-ipc.oss-cn-shenzhen.aliyuncs.com/img/20260714091213003.png)
@@ -175,6 +187,22 @@ git rebase --continue
 
 ## 项目状态
 
-mergev 当前是一个基于 Tauri 2、React 和 TypeScript 的桌面应用，核心目标是提供轻量、清晰、可靠的 Git 冲突解决体验。
+mergev 提供 Tauri 桌面应用和 VS Code 插件两种入口，核心目标是提供轻量、清晰、可靠的 Git 冲突解决体验。
+
+## 开发
+
+安装依赖后，可从仓库根目录执行：
+
+```bash
+npm ci
+bun run dev:desktop
+bun run build:desktop
+bun run build:vscode
+bun run test
+bun run check:rust
+bun run package:vscode
+```
+
+桌面端原生安装包使用 `bun run --filter mergev-desktop package` 构建。发布版本分别使用 `desktop-vx.y.z` 与 `vscode-vx.y.z` 标签。
 
 友情链接： [linux](https://linux.do)

@@ -1,0 +1,10 @@
+src/**
+sidecar/**
+*.mjs
+tsconfig.json
+package-lock.json
+node_modules/**
+media/*.ts
+TECHNICAL_PLAN.md
+.vsix-staging/**
+*.vsix
