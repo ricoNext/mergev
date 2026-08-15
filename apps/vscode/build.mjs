@@ -1,10 +1,12 @@
 import { build as esbuild } from "esbuild";
 import { mkdir, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL(".", import.meta.url));
-const dependency = (name) => join(root, "node_modules", name);
+const require = createRequire(import.meta.url);
+const dependency = (name) => dirname(require.resolve(`${name}/package.json`));
 const mergeUiSource = join(root, "../../packages/merge-ui/src");
 
 export const build = (async () => {
@@ -33,7 +35,7 @@ export const build = (async () => {
       sourcemap: false,
       metafile: true,
       alias: {
-		"@mergev/merge-ui": mergeUiSource,
+        "@mergev/merge-ui": mergeUiSource,
         react: dependency("react"),
         "react-dom": dependency("react-dom"),
       },

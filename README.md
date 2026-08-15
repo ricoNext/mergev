@@ -203,6 +203,6 @@ bun run check:rust
 bun run package:vscode
 ```
 
-桌面端原生安装包使用 `bun run --filter mergev-desktop package` 构建。发布版本分别使用 `desktop-vx.y.z` 与 `vscode-vx.y.z` 标签。
+桌面端原生安装包使用 `bun run --filter mergev-desktop package` 构建，并通过 `desktop-vx.y.z` 标签触发 GitHub Actions 发布。VS Code 插件使用 `bun run package:vscode` 在本地生成 VSIX，随后由开发者手动上传至 Marketplace；GitHub Actions 不打包或发布 VS Code 插件。
 
 友情链接： [linux](https://linux.do)
