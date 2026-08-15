@@ -1,0 +1,13 @@
+[workspace]
+members = [
+  "apps/desktop/src-tauri",
+  "apps/vscode/sidecar",
+  "crates/mergev-core"
+]
+resolver = "2"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

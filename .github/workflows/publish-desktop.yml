@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing tag to publish, for example v0.1.0
+        description: Existing desktop tag to publish, for example desktop-v0.1.0
         required: true
   push:
     tags:
-      - "v*"
+      - "desktop-v*"
 
 permissions:
   contents: write
@@ -60,6 +60,12 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -70,18 +76,19 @@ jobs:
       - name: Cache Rust dependencies
         uses: swatinem/rust-cache@v2
         with:
-          workspaces: "./src-tauri -> target"
+          workspaces: ". -> target"
 
       - name: Install frontend dependencies
-        run: bun install --frozen-lockfile
+        run: npm ci
 
       - name: Build and upload desktop bundles
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
+          projectPath: apps/desktop
           tagName: ${{ steps.release.outputs.tag }}
-          releaseName: mergev ${{ steps.release.outputs.tag }}
+          releaseName: mergev desktop ${{ steps.release.outputs.tag }}
           releaseBody: Desktop release for mergev.
           releaseDraft: false
           prerelease: false

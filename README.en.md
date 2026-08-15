@@ -124,29 +124,37 @@ git cherry-pick --continue
 ### Install dependencies
 
 ```bash
-npm install
+npm ci
 ```
 
-### Run the desktop app in development mode
+### Workspace commands
 
 ```bash
-npm run tauri dev
+bun run dev:desktop
+bun run build:desktop
+bun run build:vscode
+bun run test
+bun run check:rust
+bun run package:vscode
 ```
 
-### Build and test
+The repository is a monorepo with independent desktop and VS Code products:
+
+```text
+apps/desktop/       Tauri desktop application
+apps/vscode/        VS Code extension and Rust sidecar
+packages/merge-ui/  Shared React merge UI and frontend logic
+crates/mergev-core/ Shared Rust Git and merge core
+```
+
+To create native desktop installers, run:
 
 ```bash
-npm run build
-npm test
+bun run --filter mergev-desktop package
 ```
 
-`npm run build` type-checks the frontend and creates the Vite production build. To create native installers, run:
-
-```bash
-npm run tauri:build
-```
-
-The frontend uses React and TypeScript. The native layer is written in Rust with Tauri 2.
+Desktop and extension releases use separate tags: `desktop-vx.y.z` and
+`vscode-vx.y.z`.
 
 ## Typical workflow
 

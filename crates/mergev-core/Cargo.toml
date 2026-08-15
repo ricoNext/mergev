@@ -1,0 +1,11 @@
+[package]
+name = "mergev-core"
+version = "1.0.1"
+edition = "2021"
+description = "Shared merge conflict model and Git operations for mergev"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+
+[lib]
+path = "src/lib.rs"
