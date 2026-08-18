@@ -87,3 +87,4 @@ docs/*
 post-to-wechat/
 .baoyu-skills/
 apps/zed-poc/extension.wasm
+.workbuddy/
