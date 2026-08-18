@@ -26,7 +26,7 @@
     "diff"
   ],
   "extensionKind": [
-    "ui"
+    "workspace"
   ],
   "capabilities": {
     "untrustedWorkspaces": {

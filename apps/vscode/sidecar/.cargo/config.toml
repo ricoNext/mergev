@@ -1,0 +1,8 @@
+# 在 macOS / Windows 主机上交叉编译 Linux musl sidecar。
+# rust-lld 是 Rust 工具链自带的跨平台链接器，配合 musl 的
+# self-contained CRT 对象，无需安装 sysroot 即可静态链接。
+[target.x86_64-unknown-linux-musl]
+linker = "rust-lld"
+
+[target.aarch64-unknown-linux-musl]
+linker = "rust-lld"

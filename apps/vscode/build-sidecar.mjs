@@ -11,6 +11,9 @@ const targets = [
   { rust: "x86_64-apple-darwin", folder: "darwin-x64", binary: "mergev-sidecar" },
   { rust: "x86_64-pc-windows-msvc", folder: "win32-x64", binary: "mergev-sidecar.exe" },
   { rust: "aarch64-pc-windows-msvc", folder: "win32-arm64", binary: "mergev-sidecar.exe" },
+  // Linux 使用 musl 静态链接：免疫远端服务器 glibc 版本差异（Remote SSH 场景）
+  { rust: "x86_64-unknown-linux-musl", folder: "linux-x64", binary: "mergev-sidecar" },
+  { rust: "aarch64-unknown-linux-musl", folder: "linux-arm64", binary: "mergev-sidecar" },
 ];
 
 function run(command, args) {
@@ -79,4 +82,4 @@ for (const target of targets) {
   );
 }
 
-console.log("已构建 macOS 与 Windows sidecar");
+console.log("已构建 macOS、Windows 与 Linux sidecar");

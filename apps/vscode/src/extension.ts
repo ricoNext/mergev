@@ -196,7 +196,10 @@ function bundledSidecarPath(extensionPath: string): string {
   if (process.platform === "win32") {
     return path.join(extensionPath, "bin", `win32-${arch}`, "mergev-sidecar.exe");
   }
-  throw new Error("mergev VS Code 插件当前仅支持 macOS 和 Windows。");
+  if (process.platform === "linux") {
+    return path.join(extensionPath, "bin", `linux-${arch}`, "mergev-sidecar");
+  }
+  throw new Error(`mergev VS Code 插件当前不支持该平台（${process.platform}）。`);
 }
 
 function documentParts(uri: vscode.Uri) { const query = new URLSearchParams(uri.query); return { root: query.get("root") || "", path: query.get("path") || "" }; }
