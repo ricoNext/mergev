@@ -64,10 +64,9 @@ The generated VSIX is written to `apps/vscode/`.
 ### Requirements
 
 - VS Code 1.85 or later.
-- A local macOS (Apple Silicon or Intel) or Windows (x64 or arm64) workspace.
+- macOS (Apple Silicon or Intel), Windows (x64 or arm64), or Linux (x64 or arm64) workspaces.
 - Git available on `PATH`, or a path configured through `mergev.gitPath`.
-
-Linux, Remote SSH, WSL, Dev Containers, and other remote Extension Hosts are not currently supported.
+- Remote SSH, WSL, and Dev Containers are supported. The Linux sidecar is statically linked with musl.
 
 ### Usage in VS Code
 
