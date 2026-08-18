@@ -29,7 +29,8 @@ class SidecarClient implements vscode.Disposable {
 
   start() {
     if (this.process) return;
-    if (vscode.env.remoteName) throw new Error("mergev 第一版仅支持本地工作区，暂不支持 Remote SSH、WSL 或 Dev Container。");
+    // Remote SSH / WSL / Dev Container：extensionKind 为 workspace，
+    // 扩展与 sidecar 在远端运行，路径即远端真实路径，无需特殊处理。
     const configured = vscode.workspace.getConfiguration("mergev").get<string>("sidecarPath", "");
     const bundled = bundledSidecarPath(this.context.extensionPath);
     const executable = configured || bundled;
