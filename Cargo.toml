@@ -2,6 +2,8 @@
 members = [
   "apps/desktop/src-tauri",
   "apps/vscode/sidecar",
+  "apps/zed-poc",
+  "apps/zed-poc/mcp-server",
   "crates/mergev-core"
 ]
 resolver = "2"

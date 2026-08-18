@@ -1,0 +1,9 @@
+id = "mergev"
+name = "mergev"
+version = "0.1.0"
+schema_version = 1
+authors = ["mergev"]
+description = "Git conflict resolution in Zed via mergev (MCP context server)"
+repository = "https://github.com/mergev/mergev"
+
+[context_servers.mergev]

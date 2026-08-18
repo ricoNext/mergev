@@ -1,0 +1,11 @@
+[package]
+name = "zed-mergev"
+version = "0.1.0"
+edition = "2021"
+description = "Zed extension host for mergev (feasibility PoC)"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+zed_extension_api = "0.7.0"

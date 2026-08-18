@@ -80,5 +80,10 @@ apps/vscode/bin/
 apps/vscode/media/merge-webview*
 
 docs/
+!docs/
+docs/*
+!docs/ZED_PLUGIN_PLAN.md
+!docs/ZED_FEASIBILITY.md
 post-to-wechat/
 .baoyu-skills/
+apps/zed-poc/extension.wasm
