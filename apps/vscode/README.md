@@ -3,6 +3,8 @@
 在 VS Code 里用三栏界面解决 Git 冲突：左侧是 Yours，中间是 Result，
 右侧是 Theirs。按冲突块逐个选择，保存后自动 `git add`。
 
+![](https://neptune-ipc.oss-cn-shenzhen.aliyuncs.com/img/20260817100604704.png)
+
 ## 功能
 
 - 在 Activity Bar 列出当前工作区的冲突文件
@@ -14,11 +16,11 @@
 
 ## 要求
 
-- macOS（Apple Silicon 或 Intel）
+- macOS（Apple Silicon 或 Intel）或 Windows（x64 或 arm64）
 - Visual Studio Code 1.85 或更高版本
 - Git 可通过 `PATH` 访问，或已配置 `mergev.gitPath`
 
-当前版本不支持 Windows、Linux，也不支持 Remote SSH、WSL、
+当前版本不支持 Linux，也不支持 Remote SSH、WSL、
 Dev Container 等远程 Extension Host。
 
 ## 怎么用
@@ -27,15 +29,17 @@ Dev Container 等远程 Extension Host。
 2. 打开 VS Code 工作区。
 3. 点击 Activity Bar 中的 mergev 图标，展开仓库查看冲突文件。
 4. 也可以在 Source Control 的 merge 分组中，右键选择
-   「使用 mergev 打开」。
+  「使用 mergev 打开」。
 5. 在三栏界面中处理冲突块，或对整份文件执行 Accept Yours /
-   Accept Theirs。
+  Accept Theirs。
 6. 所有冲突处理完成后点击保存。mergev 会写回文件并 `git add`。
 7. 回到终端继续原来的 Git 操作，例如 `git commit` 或
-   `git rebase --continue`。
+  `git rebase --continue`。
 
 Result 始终只读。关闭 Tab 后，尚未保存的冲突决策不会恢复。
-当前版本不提供键盘快捷键，`Cmd+S` 也不会保存结果。
+三栏页面支持 `Cmd+Z` / `Ctrl+Z` 撤销冲突决策，支持
+`Cmd+Shift+Z` / `Ctrl+Shift+Z` 恢复冲突决策。`Cmd+S` / `Ctrl+S`
+不会保存结果。
 
 ## 配置
 

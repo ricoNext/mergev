@@ -142,7 +142,17 @@ fn repo_and_path(params: &Value) -> Result<(PathBuf, String), String> {
 
 fn ensure_git_available() -> Result<(), String> {
     let executable = std::env::var_os("MERGEV_GIT_PATH").unwrap_or_else(|| "git".into());
-    match Command::new(executable).arg("--version").output() {
+    let mut cmd = Command::new(executable);
+    cmd.arg("--version");
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    match cmd.output() {
         Ok(output) if output.status.success() => Ok(()),
         Ok(_) => Err("未找到可用的 Git，请先安装 Git 或在 mergev 设置中配置 Git 路径。".into()),
         Err(err) if err.kind() == io::ErrorKind::NotFound => {

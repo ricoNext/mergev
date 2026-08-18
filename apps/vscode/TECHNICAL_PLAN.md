@@ -24,15 +24,16 @@ mergev 目前是基于 Tauri、React 和 Rust 的桌面端 Git 冲突解决工�
 ### 2.1 支持范围
 
 - VS Code 1.85 及以上版本。
-- 本地 macOS。
-- Apple Silicon（arm64）和 Intel（x64）。
+- 本地 macOS 与 Windows。
+- macOS：Apple Silicon（arm64）和 Intel（x64）。
+- Windows：x64 和 arm64。
 - 单根工作区和 Multi-root Workspace。
 - Git merge、rebase、cherry-pick、revert 等桌面端当前可识别的冲突状态。
 - 通过 `.vsix` 本地安装。
 
 ### 2.2 暂不支持
 
-- Windows 和 Linux。架构需保留扩展能力，后续再增加对应 sidecar。
+- Linux。架构需保留扩展能力，后续再增加对应 sidecar。
 - Remote SSH、WSL、Dev Container 和其他远程 Extension Host 场景。
 - 未完成冲突决策的 Tab 会话恢复。
 - Result 手工编辑模式。
@@ -50,8 +51,8 @@ mergev 目前是基于 Tauri、React 和 Rust 的桌面端 Git 冲突解决工�
 - 层级固定为“仓库 → 冲突文件”，不增加目录层级。
 - 只展示 VS Code Workspace Folder 根目录对应的仓库，不扫描任意子仓库。
 - 多个仓库按照 Workspace Folder 顺序展示。
-- 所有仓库默认折叠，不在插件打开时批量扫描。
-- 用户每次展开仓库时立即重新读取状态，不使用缓存。
+- 所有仓库默认折叠；插件激活或视图重新可见时，先主动加载各 Workspace Folder 的仓库快照。
+- 用户每次展开仓库时仍立即重新读取状态，确保冲突文件列表反映最新 Git 状态。
 - 冲突文件按文件名排序，再按目录排序，与桌面端现有逻辑一致。
 - 冲突文件节点展示桌面端已有的文件名、目录、双方状态和冲突块信息。
 - 仓库节点加载后展示当前分支、Git 操作类型和仓库状态。
@@ -59,7 +60,7 @@ mergev 目前是基于 Tauri、React 和 Rust 的桌面端 Git 冲突解决工�
 - 仓库加载失败时显示不可点击的错误节点，并提供“重试”。
 - 不显示 Activity Bar 徽标，避免把“未扫描”误解为“没有冲突”。
 - 不提供顶部全局刷新，只在仓库节点悬停时显示该仓库的刷新按钮。
-- 工作区目录发生变化时不持续监听；用户重新打开 mergev 视图时再更新仓库列表。
+- 工作区根目录发生变化时更新仓库列表并重新加载快照；视图重新打开时也会重新加载。
 
 ### 3.2 Tree View 操作
 
@@ -91,7 +92,7 @@ VS Code Source Control 的冲突文件右键菜单中同时提供“使用 merge
 - 三栏固定为 Yours、Result、Theirs，Result 始终只读。
 - 只有所有冲突块都处理完成后，“应用”按钮才可用。
 - 第一版不提供“编辑结果”。
-- 不注册任何快捷键。
+- 不注册 VS Code 全局快捷键；三栏 Webview 内支持桌面端的撤销与恢复快捷键。
 - 禁止 `Cmd+S` / `Ctrl+S` 保存，只允许点击 mergev 的“应用”按钮。
 - 点击“应用”后写回文件并执行 `git add`。
 - 应用成功后，文件从仓库冲突列表中移除，但当前 Tab 保留，供用户检查结果。
@@ -171,7 +172,7 @@ sidecar 是本地长驻子进程，通过 stdin/stdout 使用一行一个 JSON �
 
 - 桌面端适配器调用 Tauri `invoke`、Tauri 确认框和主题事件。
 - VS Code 适配器通过 `postMessage` 请求 Extension Host 保存或弹出原生确认框。
-- VS Code 适配器关闭 mergev 自定义快捷键，只拦截键盘保存。
+- VS Code 适配器仅开启撤销与恢复快捷键，并继续拦截键盘保存及其他桌面端快捷键。
 - 两个宿主不分别维护冲突块算法和 Result 拼接逻辑。
 
 ### 4.5 Git 与路径处理
@@ -180,12 +181,12 @@ sidecar 是本地长驻子进程，通过 stdin/stdout 使用一行一个 JSON �
 - `mergev.gitPath` 可配置 Git 可执行文件路径，并通过 `MERGEV_GIT_PATH` 传给 sidecar 和共享核心。
 - Git 不可用时提示用户安装 Git 或配置 Git 路径。
 - 所有文件操作只接受仓库内相对路径，拒绝绝对路径和 `..` 路径穿越。
-- 第一版只允许运行于本地 macOS；远程和其他平台返回明确错误，不静默失败。
+- 第一版只允许运行于本地 macOS 和 Windows；远程和其他平台返回明确错误，不静默失败。
 
 ## 5. 性能与状态策略
 
-- 插件启动不执行仓库扫描。
-- Tree View 获取根节点时只读取 Workspace Folder 元数据。
+- 插件启动会扫描当前 Workspace Folder 对应的仓库快照，用于立即显示分支和操作状态。
+- Tree View 获取根节点时只读取 Workspace Folder 元数据；冲突文件列表在展开仓库时实时读取。
 - 仓库展开时执行一次实时扫描；再次展开重新扫描。
 - 不监听整个工作区的文件变化或 Git 状态变化。
 - 不计算全局冲突数量，也不显示徽标。
@@ -216,6 +217,8 @@ apps/vscode/
   sidecar/                          Rust sidecar
   bin/darwin-arm64/                 Apple Silicon 二进制
   bin/darwin-x64/                   Intel 二进制
+  bin/win32-x64/                    Windows x64 二进制
+  bin/win32-arm64/                  Windows arm64 二进制
   media/                            图标与 Webview 构建产物
   package.json                      VS Code 扩展清单
 packages/merge-ui/                  跨宿主复用的 React 合并界面与纯前端逻辑
@@ -224,12 +227,13 @@ crates/mergev-core/                 共享 Rust 核心
 
 打包流程：
 
-1. 分别为 `aarch64-apple-darwin` 和 `x86_64-apple-darwin` 构建 release sidecar。
+1. 分别为 macOS（arm64 / x64）和 Windows（x64 / arm64）构建 release sidecar。
+   非 Windows 主机交叉编译 Windows sidecar 时使用 `cargo xwin`。
 2. 构建 Extension Host。
 3. 构建共享 React Webview、CSS 和受控的语法高亮资源。
-4. 将两个架构的 sidecar、扩展代码、媒体和清单写入 VSIX。
+4. 将四个架构的 sidecar、扩展代码、媒体和清单写入 VSIX。
 5. 检查 VSIX 文件清单，确保不包含 `target/`、测试缓存、旧构建文件和源映射等非必要内容。
-6. 在 Intel 和 Apple Silicon 上分别安装并进行冒烟测试。
+6. 在 Intel Mac、Apple Silicon 和 Windows 上分别安装并进行冒烟测试。
 
 ## 8. 测试与验收
 
@@ -271,6 +275,7 @@ crates/mergev-core/                 共享 Rust 核心
 - 同一文件复用 Tab，不同文件可保留多个 Tab。
 - 三栏界面与桌面端一致，Result 不可编辑。
 - 未全部处理时“应用”不可用。
+- `Cmd+Z` / `Ctrl+Z` 可撤销冲突决策，`Cmd+Shift+Z` / `Ctrl+Shift+Z` 可恢复冲突决策。
 - `Cmd+S` / `Ctrl+S` 不保存。
 - 应用后文件写回、暂存、Tree 移除且 Tab 保留。
 - 整文件 Accept 的未保存决策确认正确。
@@ -306,12 +311,12 @@ crates/mergev-core/                 共享 Rust 核心
 - 实现 Tab 去重、只读 Result、应用门槛和禁用保存快捷键。
 - 验收门槛：桌面端和 VS Code 使用同一冲突决策与序列化代码。
 
-### 阶段 E：双架构打包
+### 阶段 E：多架构打包
 
-- 构建 arm64 和 x64 sidecar。
+- 构建 macOS arm64 / x64 与 Windows x64 / arm64 sidecar。
 - 清理 Webview 多余资源和旧产物。
-- 生成包含双架构二进制的最新 VSIX。
-- 验收门槛：两类 Mac 均可安装、启动和完成一次真实冲突处理。
+- 生成包含上述架构二进制的最新 VSIX。
+- 验收门槛：Mac 与 Windows 均可安装、启动和完成一次真实冲突处理。
 
 ### 阶段 F：内部测试与发布准备
 
@@ -339,7 +344,9 @@ crates/mergev-core/                 共享 Rust 核心
 | Tab 脏状态与刷新 | 已实现，待实机验证 | 单仓库刷新会重载相关 Tab 并丢弃当前决策 |
 | Apple Silicon sidecar | 已生成 | `bin/darwin-arm64/mergev-sidecar` 已存在 |
 | Intel sidecar | 已生成 | `bin/darwin-x64/mergev-sidecar` 已生成并确认是 x86_64 Mach-O |
-| VSIX | 已重新生成，待实机验收 | 最新 VSIX 包含共享 UI、精简资源和双架构 sidecar |
+| Windows x64 sidecar | 已接入 | `bin/win32-x64/mergev-sidecar.exe` 由 `cargo xwin` 交叉编译 |
+| Windows arm64 sidecar | 已接入 | `bin/win32-arm64/mergev-sidecar.exe` 由 `cargo xwin` 交叉编译 |
+| VSIX | 已重新生成，待实机验收 | 最新 VSIX 包含共享 UI、精简资源和 macOS / Windows sidecar |
 | Git 冲突 fixture | 已完成 | 已覆盖双方修改、Result 保存暂存、整文件 Accept 和双方删除场景 |
 | 自动化测试 | 已通过 | 80 个前端测试、26 个核心测试及全部构建检查通过 |
 | VS Code 实机测试 | 进行中 | VSIX 已在 arm64 VS Code 注册，UI 和真实 Git 流程待验收 |
@@ -352,15 +359,17 @@ crates/mergev-core/                 共享 Rust 核心
    Source Control 菜单上下文、Tree 刷新和 Tab 生命周期。
 2. 在 Intel Mac 上安装同一 VSIX，验证 x86_64 sidecar 可启动并完成一次
    真实冲突处理。
-3. 检查完整 diff，确认没有无关格式变化，再提交代码。
+3. 在 Windows（x64 或 arm64）上安装同一 VSIX，验证 sidecar 可启动并完成一次
+   真实冲突处理。
+4. 检查完整 diff，确认没有无关格式变化，再提交代码。
 
 ## 12. 完成定义
 
 只有同时满足以下条件，第一版 VS Code 支持才算完成：
 
 - 桌面端全部自动化测试和关键手工流程无回归。
-- Apple Silicon 与 Intel sidecar 均包含在 VSIX 中。
-- VSIX 可在两类本地 Mac 上安装并正常启动。
+- Apple Silicon、Intel 与 Windows sidecar 均包含在 VSIX 中。
+- VSIX 可在本地 Mac 和 Windows 上安装并正常启动。
 - 多仓库按需加载策略符合本文约定，无全局预扫描和徽标。
 - Tree View、Source Control 入口和 Custom Editor 主流程全部通过验收。
 - 三栏操作界面复用桌面端实现，Result 始终只读。

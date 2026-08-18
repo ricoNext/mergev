@@ -113,6 +113,7 @@ function App() {
 
 	const runtime = useMemo<MergeScreenRuntime>(() => ({
 		enableKeyboardShortcuts: false,
+		enableHistoryShortcuts: true,
 		saveMergeResult: async ({ result }) => {
 			await request("apply", { result });
 		},

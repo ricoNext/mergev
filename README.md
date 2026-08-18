@@ -2,7 +2,7 @@
 
 [English](README.en.md) | 中文
 
-一个从终端启动的跨平台 Git 冲突解决器，用三栏界面直观看 Yours、Theirs 和最终 Result。
+一个支持桌面应用和 VS Code 插件的 Git 冲突解决器，用三栏界面直观看 Yours、Theirs 和最终 Result。
 
 <div align="center">
 
@@ -18,7 +18,7 @@
 
 ![](https://neptune-ipc.oss-cn-shenzhen.aliyuncs.com/img/20260714091840470.png)
 
-mergev 是一个专注于 Git 冲突解决的桌面工具。它把难读的冲突标记变成清晰的三栏可视化界面，让你像在专业 IDE 的合并窗口里一样，对比 Yours、Theirs 和最终 Result，逐块决定保留哪一边，最后一键保存并加入暂存区。
+mergev 是一个专注于 Git 冲突解决的工具，提供独立桌面应用和 VS Code 插件两种入口。它把难读的冲突标记变成清晰的三栏可视化界面，让你像在专业 IDE 的合并窗口里一样，对比 Yours、Theirs 和最终 Result，逐块决定保留哪一边，最后一键保存并加入暂存区。
 
 如果你习惯在终端里 `merge`、`rebase`、`cherry-pick`，但不想在冲突出现时靠肉眼编辑 `<<<<<<<`、`=======`、`>>>>>>>`，mergev 就是为这个时刻准备的。
 
@@ -59,11 +59,52 @@ mergev 不想替代你的 IDE，也不想接管完整 Git 工作流。它只把�
 - 想在提交前更直观看到最终合并结果的团队
 - 使用 AI 编码工具后，需要人工确认合并结果的开发者
 
-## 怎么用
+## 选择使用方式
+
+| 入口 | 适合场景 | 支持的平台 |
+| --- | --- | --- |
+| 桌面应用 | 你在终端中执行 Git 命令，希望按需打开独立的冲突处理工具 | macOS、Windows、Linux |
+| VS Code 插件 | 你希望留在 VS Code 中处理当前工作区的冲突 | 本地 macOS、Windows |
+
+两种入口共用同一套合并核心与三栏界面；保存后都会将结果写回工作区并执行 `git add`。选择最贴合当前工作流的入口即可。
+
+## VS Code 插件
+
+![VS Code 中的 mergev 三栏合并界面](https://neptune-ipc.oss-cn-shenzhen.aliyuncs.com/img/20260817100604704.png)
+
+### 安装与要求
+
+当前插件通过 VSIX 安装：在 VS Code 命令面板执行“Extensions: Install from VSIX...”，然后选择已获取的 `mergev-vscode-<版本号>.vsix` 文件。
+
+从源码构建 VSIX 时，在仓库根目录执行：
+
+```bash
+npm ci
+bun run package:vscode
+```
+
+生成的文件位于 `apps/vscode/`。
+
+- 支持 VS Code 1.85 及以上版本。
+- 支持本地 macOS（Apple Silicon、Intel）和 Windows（x64、arm64）工作区。
+- Git 必须可通过 `PATH` 访问；否则在设置中填写 `mergev.gitPath`。
+- 暂不支持 Linux、Remote SSH、WSL、Dev Container 等远程 Extension Host。
+
+### 在 VS Code 中处理冲突
+
+1. 当 `merge`、`rebase` 或 `cherry-pick` 产生冲突后，打开对应的 VS Code 工作区。
+2. 点击 Activity Bar 中的 mergev 图标，展开仓库后选择冲突文件；也可在 Source Control 的 merge 分组中右键选择“使用 mergev 打开”。
+3. 在三栏界面中逐块选择 Yours、Theirs 或两侧都保留，也可以对整份文件执行 Accept Yours / Accept Theirs。
+4. 完成所有冲突块后点击保存。mergev 会写回文件并执行 `git add`。
+5. 回到终端继续原来的 Git 操作，例如 `git rebase --continue`。
+
+Result 始终只读。`Cmd+Z` / `Ctrl+Z` 可以撤销冲突决策，`Cmd+Shift+Z` / `Ctrl+Shift+Z` 可以恢复；`Cmd+S` / `Ctrl+S` 不会保存结果。关闭 Tab 后，未保存的冲突决策不会恢复。
+
+## 桌面应用
 
 ![](https://neptune-ipc.oss-cn-shenzhen.aliyuncs.com/img/20260714091547137.png)
 
-### 0. 安装
+### 1. 安装
 在[release](https://github.com/ricoNext/mergev/releases)中找到最新的版本和合适的系统（macOS、Windows、Linux），下载对应的安装包。
 
 ```text
@@ -95,7 +136,7 @@ sudo xattr -d com.apple.quarantine /Applications/mergev.app
 sudo xattr -d com.apple.quarantine /Applications/mergev.app/Contents/MacOS/*
 ```
 
-### 1. 打开 Mergev
+### 2. 打开 mergev
 
 安装桌面应用后，首次启动会提示安装全局命令。推荐安装，这样之后可以在任何 Git 仓库目录运行：
 
@@ -120,7 +161,7 @@ mergev
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-### 2. 在冲突仓库中启动
+### 3. 在冲突仓库中启动
 
 当 Git 操作产生冲突后，进入仓库目录或任意子目录：
 
@@ -133,7 +174,7 @@ mergev 会检测当前 Git 仓库、当前分支、正在进行的操作，并�
 
 如果当前目录不是 Git 仓库，命令会在终端中提示错误并退出，不会打开空窗口。
 
-### 3. 选择冲突文件
+### 4. 选择冲突文件
 
 在 Conflicts 列表中，你可以看到每个冲突文件的路径、冲突块数量和状态。
 
@@ -143,7 +184,7 @@ mergev 会检测当前 Git 仓库、当前分支、正在进行的操作，并�
 - **Accept Theirs**：整份文件使用传入分支版本
 - **Merge...**：进入三栏合并界面，逐块处理
 
-### 4. 在三栏界面里解决冲突
+### 5. 在三栏界面里解决冲突
 
 进入 Merge 界面后，你会看到：
 
@@ -155,7 +196,7 @@ mergev 会检测当前 Git 仓库、当前分支、正在进行的操作，并�
 
 当所有冲突块都处理完成后，点击保存，mergev 会写回文件并执行 `git add`。
 
-### 5. 回到 Git 流程
+### 6. 回到 Git 流程
 
 所有冲突都解决后，回到终端继续原来的 Git 操作：
 
@@ -185,10 +226,6 @@ git rebase --continue
 
 整个过程中，你仍然掌控 Git 命令；mergev 只负责把冲突解决这一步变得可视、可检查、可重复。
 
-## 项目状态
-
-mergev 提供 Tauri 桌面应用和 VS Code 插件两种入口，核心目标是提供轻量、清晰、可靠的 Git 冲突解决体验。
-
 ## 开发
 
 安装依赖后，可从仓库根目录执行：
@@ -203,6 +240,6 @@ bun run check:rust
 bun run package:vscode
 ```
 
-桌面端原生安装包使用 `bun run --filter mergev-desktop package` 构建，并通过 `desktop-vx.y.z` 标签触发 GitHub Actions 发布。VS Code 插件使用 `bun run package:vscode` 在本地生成 VSIX，随后由开发者手动上传至 Marketplace；GitHub Actions 不打包或发布 VS Code 插件。
+桌面端原生安装包使用 `bun run --filter mergev-desktop package` 构建，并通过 `desktop-vx.y.z` 标签触发 GitHub Actions 发布。VS Code 插件使用 `bun run package:vscode` 在 `apps/vscode/` 中生成 VSIX，随后手动上传至 Marketplace；`bun run release:vscode <版本号>` 用于更新版本、变更日志并创建 `vscode-vx.y.z` 标签。
 
 友情链接： [linux](https://linux.do)

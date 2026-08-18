@@ -50,6 +50,7 @@ export type MergeScreenRuntime = {
 		},
 	) => Promise<boolean>;
 	enableKeyboardShortcuts?: boolean;
+	enableHistoryShortcuts?: boolean;
 	onDirtyChange?: (dirty: boolean) => void;
 	subscribeToThemeChanges?: (
 		listener: (theme: Theme) => void,
@@ -518,8 +519,39 @@ export function MergeScreen({
 
 	useEffect(() => {
 		function onKeyDown(event: KeyboardEvent) {
+			const key = event.key.toLowerCase();
+			const hasMod = event.metaKey || event.ctrlKey;
+			const target = event.target as HTMLElement | null;
+			const isEditing =
+				target &&
+				(target.tagName === "INPUT" ||
+					target.tagName === "TEXTAREA" ||
+					target.isContentEditable);
+			const historyShortcutsEnabled =
+				runtime.enableKeyboardShortcuts !== false ||
+				runtime.enableHistoryShortcuts === true;
+
+			if (session && !isEditing && historyShortcutsEnabled) {
+				if (hasMod && key === "z" && event.shiftKey) {
+					if (!canRedo) {
+						return;
+					}
+					event.preventDefault();
+					redoDecision();
+					return;
+				}
+				if (hasMod && key === "z" && !event.shiftKey) {
+					if (!canUndo) {
+						return;
+					}
+					event.preventDefault();
+					undoDecision();
+					return;
+				}
+			}
+
 			if (runtime.enableKeyboardShortcuts === false) {
-				if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+				if (hasMod && key === "s") {
 					event.preventDefault();
 					event.stopPropagation();
 				}
@@ -528,34 +560,10 @@ export function MergeScreen({
 			if (!session) {
 				return;
 			}
-			const target = event.target as HTMLElement | null;
-			if (
-				target &&
-				(target.tagName === "INPUT" ||
-					target.tagName === "TEXTAREA" ||
-					target.isContentEditable)
-			) {
+			if (isEditing) {
 				return;
 			}
 
-			const key = event.key.toLowerCase();
-			const hasMod = event.metaKey || event.ctrlKey;
-			if (hasMod && key === "z" && event.shiftKey) {
-				if (!canRedo) {
-					return;
-				}
-				event.preventDefault();
-				redoDecision();
-				return;
-			}
-			if (hasMod && key === "z" && !event.shiftKey) {
-				if (!canUndo) {
-					return;
-				}
-				event.preventDefault();
-				undoDecision();
-				return;
-			}
 			if (hasMod && key === "s" && canSave && !view.saving) {
 				event.preventDefault();
 				void saveFile();

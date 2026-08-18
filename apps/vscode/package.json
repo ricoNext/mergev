@@ -2,8 +2,8 @@
   "name": "mergev-vscode",
   "displayName": "mergev",
   "description": "使用 mergev 三栏界面解决 Git 冲突",
-  "version": "0.0.3",
-  "publisher": "riconext",
+  "version": "0.0.7",
+  "publisher": "ricoNext",
   "license": "MIT",
   "icon": "media/icon.png",
   "galleryBanner": {
@@ -43,6 +43,7 @@
   ],
   "main": "dist/extension.js",
   "activationEvents": [
+    "onStartupFinished",
     "onView:mergev.conflicts",
     "onCustomEditor:mergev.mergeEditor",
     "onCommand:mergev.openConflict"
@@ -177,7 +178,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build:sidecar": "node build-sidecar.mjs",
     "compile": "bun run typecheck && bun run build.mjs",
-    "package": "bun run build:sidecar && bun run typecheck && bun run package-local.mjs"
+    "package": "bun run build:sidecar && bun run compile && vsce package --no-dependencies"
   },
   "devDependencies": {
     "@types/node": "^18.19.130",

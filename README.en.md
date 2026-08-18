@@ -2,7 +2,7 @@
 
 [English](README.en.md) | [中文](README.md)
 
-A cross-platform desktop Git conflict resolver with a clear three-pane workflow for comparing Yours, Theirs, and the final Result.
+A Git conflict resolver for desktop and VS Code, with a clear three-pane workflow for comparing Yours, Theirs, and the final Result.
 
 <div align="center">
 
@@ -20,7 +20,7 @@ A cross-platform desktop Git conflict resolver with a clear three-pane workflow 
 
 ## Overview
 
-mergev focuses on the conflict-resolution part of a Git workflow. It turns hard-to-read conflict markers such as `<<<<<<<`, `=======`, and `>>>>>>>` into a visual merge interface where you can inspect both sides, make decisions block by block, and review the resulting file before saving it.
+mergev focuses on the conflict-resolution part of a Git workflow. It is available as both a standalone desktop app and a VS Code extension. It turns hard-to-read conflict markers such as `<<<<<<<`, `=======`, and `>>>>>>>` into a visual merge interface where you can inspect both sides, make decisions block by block, and review the resulting file before saving it.
 
 It works well with terminal-based workflows such as `merge`, `rebase`, and `cherry-pick`, without taking over the rest of your Git process.
 
@@ -37,7 +37,51 @@ It works well with terminal-based workflows such as `merge`, `rebase`, and `cher
 
 ![mergev merge view](https://neptune-ipc.oss-cn-shenzhen.aliyuncs.com/img/20260714091213003.png)
 
-## Installation
+## Choose an entry point
+
+| Entry point | Best for | Supported platforms |
+| --- | --- | --- |
+| Desktop app | Terminal-driven Git workflows where you want to launch a standalone resolver on demand | macOS, Windows, Linux |
+| VS Code extension | Resolving conflicts without leaving the active VS Code workspace | Local macOS and Windows |
+
+Both entry points share the same merge core and three-pane UI. Saving writes the result to the working tree and stages it with `git add`.
+
+## VS Code extension
+
+![mergev three-pane view in VS Code](https://neptune-ipc.oss-cn-shenzhen.aliyuncs.com/img/20260817100604704.png)
+
+The extension is currently installed from a VSIX. Run **Extensions: Install from VSIX...** from the VS Code Command Palette, then select the provided `mergev-vscode-<version>.vsix` file.
+
+To build a VSIX from source, run the following commands from the repository root:
+
+```bash
+npm ci
+bun run package:vscode
+```
+
+The generated VSIX is written to `apps/vscode/`.
+
+### Requirements
+
+- VS Code 1.85 or later.
+- A local macOS (Apple Silicon or Intel) or Windows (x64 or arm64) workspace.
+- Git available on `PATH`, or a path configured through `mergev.gitPath`.
+
+Linux, Remote SSH, WSL, Dev Containers, and other remote Extension Hosts are not currently supported.
+
+### Usage in VS Code
+
+1. Open a workspace with conflicts from a merge, rebase, or cherry-pick.
+2. Select the mergev icon in the Activity Bar and choose a conflicted file, or right-click a file in the Source Control merge group and select **Open with mergev**.
+3. Resolve each block with Yours, Theirs, or both sides, or use **Accept Yours** / **Accept Theirs** for the whole file.
+4. Click save after every block has a decision. mergev writes the file and runs `git add`.
+5. Continue the Git operation in your terminal, such as `git rebase --continue`.
+
+Result is always read-only. `Cmd+Z` / `Ctrl+Z` undo merge decisions and `Cmd+Shift+Z` / `Ctrl+Shift+Z` redo them. `Cmd+S` / `Ctrl+S` does not save the result, and unsaved decisions are discarded when the tab closes.
+
+## Desktop app
+
+### Installation
 
 Download the latest installer for your platform from the [GitHub Releases](https://github.com/ricoNext/mergev/releases) page.
 
