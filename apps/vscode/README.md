@@ -16,12 +16,13 @@
 
 ## 要求
 
-- macOS（Apple Silicon 或 Intel）或 Windows（x64 或 arm64）
+- macOS（Apple Silicon 或 Intel）、Windows（x64 或 arm64）或 Linux（x64 或 arm64）
 - Visual Studio Code 1.85 或更高版本
 - Git 可通过 `PATH` 访问，或已配置 `mergev.gitPath`
 
-当前版本不支持 Linux，也不支持 Remote SSH、WSL、
-Dev Container 等远程 Extension Host。
+支持 Remote SSH、WSL、Dev Container 等远程工作区：扩展运行在
+远端 Extension Host，Linux 侧使用 musl 静态链接的 sidecar，
+不依赖远端服务器的 glibc 版本。
 
 ## 怎么用
 

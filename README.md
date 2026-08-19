@@ -86,9 +86,9 @@ bun run package:vscode
 生成的文件位于 `apps/vscode/`。
 
 - 支持 VS Code 1.85 及以上版本。
-- 支持本地 macOS（Apple Silicon、Intel）和 Windows（x64、arm64）工作区。
+- 支持 macOS（Apple Silicon、Intel）、Windows（x64、arm64）和 Linux（x64、arm64）工作区。
 - Git 必须可通过 `PATH` 访问；否则在设置中填写 `mergev.gitPath`。
-- 暂不支持 Linux、Remote SSH、WSL、Dev Container 等远程 Extension Host。
+- 支持 Remote SSH、WSL、Dev Container 等远程工作区；Linux sidecar 使用 musl 静态链接。
 
 ### 在 VS Code 中处理冲突
 

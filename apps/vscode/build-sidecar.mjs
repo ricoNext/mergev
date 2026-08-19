@@ -11,6 +11,9 @@ const targets = [
   { rust: "x86_64-apple-darwin", folder: "darwin-x64", binary: "mergev-sidecar" },
   { rust: "x86_64-pc-windows-msvc", folder: "win32-x64", binary: "mergev-sidecar.exe" },
   { rust: "aarch64-pc-windows-msvc", folder: "win32-arm64", binary: "mergev-sidecar.exe" },
+  // Linux 使用 musl 静态链接：免疫远端服务器 glibc 版本差异（Remote SSH 场景）
+  { rust: "x86_64-unknown-linux-musl", folder: "linux-x64", binary: "mergev-sidecar" },
+  { rust: "aarch64-unknown-linux-musl", folder: "linux-arm64", binary: "mergev-sidecar" },
 ];
 
 function run(command, args) {
@@ -63,13 +66,25 @@ if (needsXwin && !(await hasCargoXwin())) {
   throw new Error("构建 Windows sidecar 需要 cargo-xwin。请先执行: cargo install cargo-xwin");
 }
 
+function isLinuxMuslTarget(rust) {
+  return rust.endsWith("linux-musl");
+}
+
 for (const target of targets) {
   if (!installed.has(target.rust)) {
     await run("rustup", ["target", "add", target.rust]);
   }
-  const args = isWindowsTarget(target.rust) && host !== "win32"
-    ? ["xwin", "build", "--release", "--target", target.rust, "--target-dir", "sidecar/target", "--manifest-path", "sidecar/Cargo.toml"]
-    : ["build", "--release", "--target", target.rust, "--target-dir", "sidecar/target", "--manifest-path", "sidecar/Cargo.toml"];
+  let args;
+  if (isWindowsTarget(target.rust) && host !== "win32") {
+    args = ["xwin", "build", "--release", "--target", target.rust, "--target-dir", "sidecar/target", "--manifest-path", "sidecar/Cargo.toml"];
+  } else {
+    args = ["build", "--release", "--target", target.rust, "--target-dir", "sidecar/target", "--manifest-path", "sidecar/Cargo.toml"];
+    // musl 交叉编译用 Rust 自带的 rust-lld 链接；不能用 .cargo/config.toml，
+    // 因为该脚本以 apps/vscode 为 cwd，cargo 不会发现 sidecar/.cargo/ 下的配置。
+    if (isLinuxMuslTarget(target.rust)) {
+      args.push("--config", `target.${target.rust}.linker="rust-lld"`);
+    }
+  }
   await run("cargo", args);
   const destination = join(root, "bin", target.folder);
   await mkdir(destination, { recursive: true });
@@ -79,4 +94,4 @@ for (const target of targets) {
   );
 }
 
-console.log("已构建 macOS 与 Windows sidecar");
+console.log("已构建 macOS、Windows 与 Linux sidecar");

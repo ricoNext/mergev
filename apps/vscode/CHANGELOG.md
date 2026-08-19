@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.8 - 2026-08-18
+
+### 新功能
+
+- 支持 Remote SSH、WSL、Dev Container 等远程工作区
+- 支持 Linux（x64 与 arm64），sidecar 使用 musl 静态链接
+
 ## 0.0.7 - 2026-08-18
 
 ### 改进
