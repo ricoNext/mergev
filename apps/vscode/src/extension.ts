@@ -83,7 +83,7 @@ class MessageNode extends vscode.TreeItem {
 
 class RepositoryNode extends vscode.TreeItem {
   readonly contextValue = "mergev.repository";
-  constructor(readonly repo: RepoInfo) { super(repo.name, vscode.TreeItemCollapsibleState.Collapsed); this.description = "未加载"; this.tooltip = repo.root; this.iconPath = new vscode.ThemeIcon("repo"); }
+  constructor(readonly repo: RepoInfo) { super(repo.name, vscode.TreeItemCollapsibleState.Expanded); this.description = "未加载"; this.tooltip = repo.root; this.iconPath = new vscode.ThemeIcon("repo"); }
 }
 
 class ConflictFileNode extends vscode.TreeItem {
@@ -107,6 +107,7 @@ class ConflictTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem>, 
   private readonly stateChanged = new vscode.EventEmitter<TreeState>();
   readonly onDidChangeState = this.stateChanged.event;
   private roots: RepositoryNode[];
+  private readonly loadingRepositories = new Map<RepositoryNode, Promise<WorkspaceSnapshot>>();
   constructor(private readonly sidecar: SidecarClient) { this.roots = this.readRoots(); }
   private readRoots() { return (vscode.workspace.workspaceFolders ?? []).map((folder) => new RepositoryNode({ root: folder.uri.fsPath, name: folder.name })); }
   private emitState() {
@@ -120,11 +121,22 @@ class ConflictTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem>, 
     node.tooltip = `${node.repo.root}\n${snapshot.headline}`;
     this.emitState();
   }
-  private async loadRepository(node: RepositoryNode, emit = true) {
-    const snapshot = await this.sidecar.call<WorkspaceSnapshot>("getRepositoryWorkspace", { root: node.repo.root });
-    this.updateRepositoryNode(node, snapshot);
-    if (emit) this.changed.fire(node);
-    return snapshot;
+  private loadRepository(node: RepositoryNode, emit = true) {
+    const pending = this.loadingRepositories.get(node);
+    if (pending) return pending;
+
+    const request = this.sidecar.call<WorkspaceSnapshot>("getRepositoryWorkspace", { root: node.repo.root })
+      .then((snapshot) => {
+        this.updateRepositoryNode(node, snapshot);
+        if (emit) this.changed.fire(node);
+        return snapshot;
+      });
+    this.loadingRepositories.set(node, request);
+    void request.then(
+      () => { if (this.loadingRepositories.get(node) === request) this.loadingRepositories.delete(node); },
+      () => { if (this.loadingRepositories.get(node) === request) this.loadingRepositories.delete(node); },
+    );
+    return request;
   }
   async preload(nodes = this.roots) {
     const targets = [...nodes];
@@ -149,7 +161,7 @@ class ConflictTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem>, 
     if (!(element instanceof RepositoryNode)) return [];
     const repo = element.repo;
     try {
-      const snapshot = await this.loadRepository(element, false);
+      const snapshot = repo.snapshot ?? await this.loadRepository(element, false);
       const files = [...snapshot.files].sort((a, b) => a.fileName.localeCompare(b.fileName) || a.directory.localeCompare(b.directory));
       return files.length ? files.map((file) => new ConflictFileNode(repo, file)) : [new MessageNode("当前没有待解决的冲突", "mergev.noConflicts")];
     } catch (error) {
@@ -158,18 +170,20 @@ class ConflictTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem>, 
       return [new RepositoryErrorNode(element, message)];
     }
   }
-  async refresh(repo?: RepoInfo) {
-    if (!repo) {
+  async refresh(repoRoot?: string) {
+    if (!repoRoot) {
       this.changed.fire(undefined);
       await this.preload();
       return;
     }
-    repo.snapshot = undefined;
-    this.emitState();
-    const node = this.roots.find((item) => item.repo.root === repo.root);
+    const node = this.roots.find(
+      (item) => item.repo.root === repoRoot || item.repo.snapshot?.root === repoRoot,
+    );
     if (node) {
+      node.repo.snapshot = undefined;
+      this.emitState();
       node.description = "未加载";
-      node.tooltip = repo.root;
+      node.tooltip = repoRoot;
       this.changed.fire(node);
       await this.preload([node]);
     }
@@ -180,7 +194,7 @@ class ConflictTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem>, 
     this.emitState();
     await this.preload();
   }
-  dispose() { this.changed.dispose(); this.stateChanged.dispose(); }
+  dispose() { this.loadingRepositories.clear(); this.changed.dispose(); this.stateChanged.dispose(); }
   getRepositories() { return this.roots.map((node) => node.repo); }
 }
 
@@ -212,7 +226,7 @@ class MergeEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
   constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly sidecar: SidecarClient,
-    private readonly refreshTree: (repo?: RepoInfo) => void,
+    private readonly refreshTree: (repoRoot?: string) => void,
   ) {}
   openCustomDocument(uri: vscode.Uri): vscode.CustomDocument { return { uri, dispose() {} }; }
   async resolveCustomEditor(document: vscode.CustomDocument, panel: vscode.WebviewPanel) {
@@ -233,7 +247,7 @@ class MergeEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
         }
         if (message.type === "apply") {
           await this.sidecar.call("saveMergeResult", { repoRoot: parts.root, path: parts.path, result: message.result, stage: true });
-          this.dirty.delete(key); await this.load(document.uri, panel); this.refreshTree();
+          this.dirty.delete(key); await this.load(document.uri, panel); this.refreshTree(parts.root);
           panel.webview.postMessage({ type: "response", requestId: message.requestId, ok: true, result: true });
         }
       } catch (error) {
@@ -249,7 +263,7 @@ class MergeEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
     const uri = documentUri(node.repository.root, node.file.path); const key = uri.toString();
     if (this.dirty.has(key)) { const answer = await vscode.window.showWarningMessage("当前 Tab 有未保存的操作，是否丢弃并执行整文件 Accept？", { modal: true }, "确认"); if (answer !== "确认") return; }
     await this.sidecar.call("acceptFileSide", { repoRoot: node.repository.root, path: node.file.path, side });
-    this.dirty.delete(key); const panel = this.panels.get(key); if (panel) await this.load(uri, panel); this.refreshTree(node.repository);
+    this.dirty.delete(key); const panel = this.panels.get(key); if (panel) await this.load(uri, panel); this.refreshTree(node.repository.root);
   }
   async reloadRepository(root: string) { for (const [key, panel] of this.panels) { const uri = vscode.Uri.parse(key); const parts = documentParts(uri); if (parts.root === root) await this.load(uri, panel); } }
   private async load(uri: vscode.Uri, panel: vscode.WebviewPanel) {
@@ -316,20 +330,32 @@ export function activate(context: vscode.ExtensionContext) {
   };
 
   let refreshTimer: NodeJS.Timeout | undefined;
-  let refreshAgain = false;
+  let fullRefreshPending = false;
+  const pendingRepositoryRoots = new Set<string>();
   let refreshRunning: Promise<void> | undefined;
   const runRefresh = async () => {
     if (refreshRunning) return;
     refreshRunning = (async () => {
-      do {
-        refreshAgain = false;
-        await vscode.window.withProgress({ location: { viewId: "mergev.conflicts" } }, () => tree.reopen());
-      } while (refreshAgain);
-    })().finally(() => { refreshRunning = undefined; });
+      while (fullRefreshPending || pendingRepositoryRoots.size > 0) {
+        const refreshAll = fullRefreshPending;
+        const repositoryRoots = refreshAll ? [] : [...pendingRepositoryRoots];
+        fullRefreshPending = false;
+        pendingRepositoryRoots.clear();
+        await vscode.window.withProgress(
+          { location: { viewId: "mergev.conflicts" } },
+          () => refreshAll
+            ? tree.reopen()
+            : Promise.all(repositoryRoots.map((root) => tree.refresh(root))).then(() => undefined),
+        );
+      }
+    })().finally(() => {
+      refreshRunning = undefined;
+      if (fullRefreshPending || pendingRepositoryRoots.size > 0) void runRefresh();
+    });
     await refreshRunning;
   };
-  const scheduleRefresh = (delay = 300) => {
-    refreshAgain = true;
+  const scheduleRefresh = (repoRoot?: string, delay = 300) => {
+    if (repoRoot) pendingRepositoryRoots.add(repoRoot); else fullRefreshPending = true;
     if (refreshTimer) return;
     refreshTimer = setTimeout(() => {
       refreshTimer = undefined;
@@ -337,15 +363,13 @@ export function activate(context: vscode.ExtensionContext) {
     }, delay);
   };
 
-  const refreshTree = (repo?: RepoInfo) => {
-    void vscode.window.withProgress({ location: { viewId: "mergev.conflicts" } }, () => tree.refresh(repo));
-  };
+  const refreshTree = (repoRoot?: string) => scheduleRefresh(repoRoot, 0);
   const editor = new MergeEditorProvider(context, sidecar, refreshTree);
   context.subscriptions.push(sidecar, tree, editor, treeView, vscode.window.registerCustomEditorProvider("mergev.mergeEditor", editor, { supportsMultipleEditorsPerDocument: false }));
   context.subscriptions.push(tree.onDidChangeState(updateBadge));
-  scheduleRefresh(0);
-  context.subscriptions.push(treeView.onDidChangeVisibility(({ visible }) => { if (visible) scheduleRefresh(0); }));
-  context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => scheduleRefresh(0)));
+  scheduleRefresh(undefined, 0);
+  context.subscriptions.push(treeView.onDidChangeVisibility(({ visible }) => { if (visible) scheduleRefresh(undefined, 0); }));
+  context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => scheduleRefresh(undefined, 0)));
   context.subscriptions.push({ dispose: () => { if (refreshTimer) clearTimeout(refreshTimer); } });
 
   void subscribeToGitState(context, scheduleRefresh);
@@ -356,8 +380,8 @@ export function activate(context: vscode.ExtensionContext) {
     const folder = vscode.workspace.getWorkspaceFolder(uri);
     if (folder) return editor.open(folder.uri.fsPath, path.relative(folder.uri.fsPath, uri.fsPath).split(path.sep).join("/"));
   }));
-  context.subscriptions.push(vscode.commands.registerCommand("mergev.refreshRepository", async (node?: RepositoryNode) => { if (node instanceof RepositoryNode) { refreshTree(node.repo); await editor.reloadRepository(node.repo.root); } }));
-  context.subscriptions.push(vscode.commands.registerCommand("mergev.retryRepository", (node: RepositoryNode) => node && refreshTree(node.repo)));
+  context.subscriptions.push(vscode.commands.registerCommand("mergev.refreshRepository", async (node?: RepositoryNode) => { if (node instanceof RepositoryNode) { refreshTree(node.repo.root); await editor.reloadRepository(node.repo.root); } }));
+  context.subscriptions.push(vscode.commands.registerCommand("mergev.retryRepository", (node: RepositoryNode) => node && refreshTree(node.repo.root)));
   context.subscriptions.push(vscode.commands.registerCommand("mergev.copyPath", async (node: RepositoryNode) => { if (node?.repo) await vscode.env.clipboard.writeText(node.repo.root); }));
   context.subscriptions.push(vscode.commands.registerCommand("mergev.copyBranch", async (node: RepositoryNode) => { if (node?.repo.snapshot) await vscode.env.clipboard.writeText(node.repo.snapshot.branch); }));
   context.subscriptions.push(vscode.commands.registerCommand("mergev.openTerminal", (node: RepositoryNode) => { if (node?.repo) vscode.window.createTerminal({ cwd: node.repo.root }).show(); }));
@@ -367,7 +391,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 export function deactivate() {}
 
-async function subscribeToGitState(context: vscode.ExtensionContext, scheduleRefresh: () => void) {
+async function subscribeToGitState(context: vscode.ExtensionContext, scheduleRefresh: (repoRoot?: string, delay?: number) => void) {
   const git = vscode.extensions.getExtension<GitExtension>("vscode.git");
   if (!git) return;
 
@@ -383,7 +407,7 @@ async function subscribeToGitState(context: vscode.ExtensionContext, scheduleRef
         const nextMergeCount = repository.state.mergeChanges.length;
         if (nextMergeCount === previousMergeCount) return;
         previousMergeCount = nextMergeCount;
-        scheduleRefresh();
+        scheduleRefresh(repository.rootUri.fsPath);
       }));
     };
 
