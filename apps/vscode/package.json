@@ -2,7 +2,7 @@
   "name": "mergev-vscode",
   "displayName": "mergev",
   "description": "使用 mergev 三栏界面解决 Git 冲突",
-  "version": "0.0.9",
+  "version": "0.0.10",
   "publisher": "ricoNext",
   "license": "MIT",
   "icon": "media/icon.png",
