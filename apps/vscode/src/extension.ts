@@ -236,6 +236,7 @@ class MergeEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
           this.dirty.delete(key); await this.load(document.uri, panel); this.refreshTree();
           panel.webview.postMessage({ type: "response", requestId: message.requestId, ok: true, result: true });
         }
+        if (message.type === "close") panel.dispose();
       } catch (error) {
         if (message.requestId !== undefined) panel.webview.postMessage({ type: "response", requestId: message.requestId, ok: false, error: error instanceof Error ? error.message : String(error) });
         else panel.webview.postMessage({ type: "error", message: error instanceof Error ? error.message : String(error) });
