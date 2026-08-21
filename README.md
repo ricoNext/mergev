@@ -95,7 +95,7 @@ bun run package:vscode
 1. 当 `merge`、`rebase` 或 `cherry-pick` 产生冲突后，打开对应的 VS Code 工作区。
 2. 点击 Activity Bar 中的 mergev 图标，展开仓库后选择冲突文件；也可在 Source Control 的 merge 分组中右键选择“使用 mergev 打开”。
 3. 在三栏界面中逐块选择 Yours、Theirs 或两侧都保留，也可以对整份文件执行 Accept Yours / Accept Theirs。
-4. 完成所有冲突块后点击保存。mergev 会写回文件并执行 `git add`。
+4. 完成所有冲突块后点击保存。mergev 会写回文件并执行 `git add`，然后自动关闭 Tab。
 5. 回到终端继续原来的 Git 操作，例如 `git rebase --continue`。
 
 Result 始终只读。`Cmd+Z` / `Ctrl+Z` 可以撤销冲突决策，`Cmd+Shift+Z` / `Ctrl+Shift+Z` 可以恢复；`Cmd+S` / `Ctrl+S` 不会保存结果。关闭 Tab 后，未保存的冲突决策不会恢复。
