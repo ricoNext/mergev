@@ -73,7 +73,7 @@ The generated VSIX is written to `apps/vscode/`.
 1. Open a workspace with conflicts from a merge, rebase, or cherry-pick.
 2. Select the mergev icon in the Activity Bar and choose a conflicted file, or right-click a file in the Source Control merge group and select **Open with mergev**.
 3. Resolve each block with Yours, Theirs, or both sides, or use **Accept Yours** / **Accept Theirs** for the whole file.
-4. Click save after every block has a decision. mergev writes the file and runs `git add`.
+4. Click save after every block has a decision. mergev writes the file, runs `git add`, and closes the tab.
 5. Continue the Git operation in your terminal, such as `git rebase --continue`.
 
 Result is always read-only. `Cmd+Z` / `Ctrl+Z` undo merge decisions and `Cmd+Shift+Z` / `Ctrl+Shift+Z` redo them. `Cmd+S` / `Ctrl+S` does not save the result, and unsaved decisions are discarded when the tab closes.

@@ -130,7 +130,7 @@ function App() {
 		view={view}
 		onBack={() => vscode.postMessage({ type: "reload" })}
 		onChangeView={(next) => { if (next.kind === "merge") setView(next); }}
-		onSaved={() => undefined}
+		onSaved={() => vscode.postMessage({ type: "close" })}
 		runtime={runtime}
 	/>;
 }

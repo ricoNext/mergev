@@ -33,7 +33,7 @@
   「使用 mergev 打开」。
 5. 在三栏界面中处理冲突块，或对整份文件执行 Accept Yours /
   Accept Theirs。
-6. 所有冲突处理完成后点击保存。mergev 会写回文件并 `git add`。
+6. 所有冲突处理完成后点击保存。mergev 会写回文件并 `git add`，然后自动关闭 Tab。
 7. 回到终端继续原来的 Git 操作，例如 `git commit` 或
   `git rebase --continue`。
 
