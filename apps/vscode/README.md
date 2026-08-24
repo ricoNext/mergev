@@ -28,7 +28,7 @@
 
 1. 在 Git 仓库中出现 merge、rebase 或 cherry-pick 冲突。
 2. 打开 VS Code 工作区。
-3. 点击 Activity Bar 中的 mergev 图标，展开仓库查看冲突文件。
+3. 点击 Activity Bar 中的 mergev 图标，仓库会默认展开并列出冲突文件。
 4. 也可以在 Source Control 的 merge 分组中，右键选择
   「使用 mergev 打开」。
 5. 在三栏界面中处理冲突块，或对整份文件执行 Accept Yours /
