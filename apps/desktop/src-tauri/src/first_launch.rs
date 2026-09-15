@@ -3,8 +3,7 @@ use std::path::PathBuf;
 
 /// 首次启动配置文件路径
 fn config_path() -> Result<PathBuf, String> {
-    let config_dir = dirs::config_dir()
-        .ok_or_else(|| "无法获取配置目录".to_string())?;
+    let config_dir = dirs::config_dir().ok_or_else(|| "无法获取配置目录".to_string())?;
     let app_config = config_dir.join("mergev");
     Ok(app_config.join("first_launch.json"))
 }
@@ -21,8 +20,7 @@ pub fn mark_first_launch_done() -> Result<(), String> {
 
     // 确保目录存在
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("创建配置目录失败: {}", e))?;
+        fs::create_dir_all(parent).map_err(|e| format!("创建配置目录失败: {}", e))?;
     }
 
     // 写入标记文件

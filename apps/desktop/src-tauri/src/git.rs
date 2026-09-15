@@ -36,7 +36,10 @@ impl std::fmt::Display for RepoError {
 
 pub fn resolve_repo_paths(cwd: &Path) -> Result<RepoPaths, RepoError> {
     let output = git_rev_parse(cwd, &["--show-toplevel", "--absolute-git-dir"])?;
-    let mut lines = output.lines().map(str::trim).filter(|line| !line.is_empty());
+    let mut lines = output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty());
     let root = lines.next().ok_or_else(|| RepoError::Failed {
         message: "git rev-parse 返回空仓库路径".into(),
     })?;

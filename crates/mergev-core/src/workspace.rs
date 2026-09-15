@@ -180,6 +180,16 @@ enum Segment {
     Conflict { ours: String, theirs: String },
 }
 
+/// Resolve the Git repository root that contains `cwd`.
+pub fn resolve_repo_root(cwd: &Path) -> Result<PathBuf, String> {
+    let output = git_stdout(cwd, &["rev-parse", "--show-toplevel"])?;
+    let root = output.trim();
+    if root.is_empty() {
+        return Err("git rev-parse 返回空仓库路径".into());
+    }
+    Ok(PathBuf::from(root))
+}
+
 pub fn load_workspace_from_root(root: &Path) -> Result<WorkspaceSnapshot, String> {
     load_workspace_with_root(root, root)
 }

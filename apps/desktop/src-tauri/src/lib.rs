@@ -18,6 +18,7 @@ const MENU_THEME_LIGHT: &str = "theme-light";
 const MENU_THEME_DARK: &str = "theme-dark";
 const MENU_THEME_SYSTEM: &str = "theme-system";
 const THEME_MENU_EVENT: &str = "theme-menu-selected";
+const MENU_TOOLS_INSTALL_CLI: &str = "tools-install-cli";
 
 /// CLI repository gate used by `main` before the UI starts.
 pub use git::enforce_cli_repo_gate;
@@ -266,9 +267,7 @@ fn remove_repository(app: tauri::AppHandle, path: String) -> Result<(), String> 
     let removed_root = git::resolve_repo_root(&PathBuf::from(&path)).ok();
     let should_clear_active = active.as_ref().is_some_and(|repo| {
         repo.root == PathBuf::from(&path)
-            || removed_root
-                .as_ref()
-                .is_some_and(|root| *root == repo.root)
+            || removed_root.as_ref().is_some_and(|root| *root == repo.root)
     });
 
     if should_clear_active {
@@ -290,18 +289,20 @@ fn mark_first_launch_done() -> Result<(), String> {
 
 #[tauri::command]
 fn install_cli_command() -> Result<String, String> {
-    cli::install().map(|status| {
-        let mut message = format!(
-            "已安装命令：\n{}\n\n之后可在任意 Git 仓库目录执行：\n  mergev",
-            status.link_path.display()
+    cli::install().map(|status| format_cli_install_status(&status))
+}
+
+fn format_cli_install_status(status: &cli::CliStatus) -> String {
+    let mut message = format!(
+        "已安装命令：\n{}\n\n之后可在任意 Git 仓库目录执行：\n  mergev",
+        status.link_path.display()
+    );
+    if !status.path_ready {
+        message.push_str(
+            "\n\n注意：~/.local/bin 当前不在 PATH 中。\n请把它加入 shell 配置后再开新终端，例如：\n  export PATH=\"$HOME/.local/bin:$PATH\"",
         );
-        if !status.path_ready {
-            message.push_str(
-                "\n\n注意：~/.local/bin 当前不在 PATH 中。\n请把它加入 shell 配置后再开新终端，例如：\n  export PATH=\"$HOME/.local/bin:$PATH\"",
-            );
-        }
-        message
-    })
+    }
+    message
 }
 
 fn parse_decision(value: &str) -> Result<ConflictDecision, String> {
@@ -350,7 +351,6 @@ pub fn run() {
             install_cli_command
         ])
         .setup(|app| {
-            // 简化菜单构建 - 移除非核心的 CLI 工具菜单，仅保留主题切换
             let theme_light = MenuItemBuilder::with_id(MENU_THEME_LIGHT, "亮色").build(app)?;
             let theme_dark = MenuItemBuilder::with_id(MENU_THEME_DARK, "暗色").build(app)?;
             let theme_system =
@@ -360,6 +360,14 @@ pub fn run() {
                 .item(&theme_light)
                 .item(&theme_dark)
                 .item(&theme_system)
+                .build()?;
+
+            let tools_install_cli =
+                MenuItemBuilder::with_id(MENU_TOOLS_INSTALL_CLI, "安装 mergev 命令到 PATH")
+                    .build(app)?;
+
+            let tools_menu = SubmenuBuilder::new(app, "工具")
+                .item(&tools_install_cli)
                 .build()?;
 
             #[cfg(target_os = "macos")]
@@ -385,6 +393,7 @@ pub fn run() {
                     .item(&app_menu)
                     .item(&edit_menu)
                     .item(&theme_menu)
+                    .item(&tools_menu)
                     .build()?
             };
 
@@ -394,16 +403,18 @@ pub fn run() {
                 MenuBuilder::new(app)
                     .item(&file_menu)
                     .item(&theme_menu)
+                    .item(&tools_menu)
                     .build()?
             };
 
             app.set_menu(menu)?;
 
             let handle = app.handle().clone();
-            app.on_menu_event(move |_app, event| match event.id().as_ref() {
+            app.on_menu_event(move |app, event| match event.id().as_ref() {
                 MENU_THEME_LIGHT => emit_theme_menu_selection(&handle, "light"),
                 MENU_THEME_DARK => emit_theme_menu_selection(&handle, "dark"),
                 MENU_THEME_SYSTEM => emit_theme_menu_selection(&handle, "system"),
+                MENU_TOOLS_INSTALL_CLI => install_cli_from_menu(app),
                 _ => {}
             });
 
@@ -427,4 +438,33 @@ fn emit_theme_menu_selection(app: &tauri::AppHandle, theme: &str) {
     if let Err(e) = app.emit(THEME_MENU_EVENT, theme) {
         eprintln!("Failed to emit theme-menu-selected event: {}", e);
     }
+}
+
+/// Menu entry for「工具 → 安装 mergev 命令到 PATH」.
+///
+/// Runs the same install routine as the `install_cli_command` Tauri command
+/// (used by the first-launch dialog) and reports the outcome in a native
+/// dialog, so no frontend wiring is needed.
+fn install_cli_from_menu(app: &tauri::AppHandle) {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+
+    let (success, message) = match cli::install() {
+        Ok(status) => (true, format_cli_install_status(&status)),
+        Err(err) => (false, format!("安装失败：\n{err}")),
+    };
+
+    app.dialog()
+        .message(&message)
+        .title(if success {
+            "安装 mergev 命令到 PATH"
+        } else {
+            "安装失败"
+        })
+        .kind(if success {
+            MessageDialogKind::Info
+        } else {
+            MessageDialogKind::Error
+        })
+        .buttons(MessageDialogButtons::Ok)
+        .show(|_| {});
 }

@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "apps/desktop/src-tauri",
+  "apps/tui",
   "apps/vscode/sidecar",
   "crates/mergev-core"
 ]
