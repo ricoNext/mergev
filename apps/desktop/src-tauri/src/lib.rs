@@ -46,6 +46,8 @@ impl LaunchCwd {
 struct ActiveRepositoryPayload {
     workspace: WorkspaceSnapshot,
     repos: Vec<RepositoryItem>,
+    active_worktree_path: Option<String>,
+    expanded_repo_paths: Option<Vec<String>>,
 }
 
 fn cache_active_repository(app: &tauri::AppHandle, repo: ActiveRepository) {
@@ -114,6 +116,8 @@ fn active_repository(app: &tauri::AppHandle) -> Result<ActiveRepository, String>
 fn load_active_repository_payload(
     app: &tauri::AppHandle,
     repo: &ActiveRepository,
+    active_worktree_path: Option<String>,
+    should_expand: bool,
 ) -> Result<ActiveRepositoryPayload, String> {
     cache_active_repository(app, repo.clone());
 
@@ -122,7 +126,22 @@ fn load_active_repository_payload(
     update_repository_history_from_workspace(&workspace)?;
 
     let repos = repository_history::get_recent_repositories()?;
-    Ok(ActiveRepositoryPayload { workspace, repos })
+    
+    let expanded_repo_paths = if should_expand {
+        // Resolve main path to expand
+        let main_path = git::resolve_main_worktree_path(&repo.root)
+            .unwrap_or_else(|_| repo.root.clone());
+        Some(vec![main_path.display().to_string()])
+    } else {
+        None
+    };
+    
+    Ok(ActiveRepositoryPayload {
+        workspace,
+        repos,
+        active_worktree_path,
+        expanded_repo_paths,
+    })
 }
 
 fn update_repository_history_from_workspace(snapshot: &WorkspaceSnapshot) -> Result<(), String> {
@@ -195,14 +214,33 @@ fn activate_repository(
     path: String,
 ) -> Result<ActiveRepositoryPayload, String> {
     let repo_path = PathBuf::from(&path);
-    let repo = resolve_and_cache_active_repository(&app, &repo_path)?;
-    load_active_repository_payload(&app, &repo)
+    
+    // Classify the path to determine if it's a main worktree or linked worktree
+    let classification = git::classify_launch_path(&repo_path).ok();
+    
+    let (repo_root, active_worktree_path, should_expand) = if let Some(class) = classification {
+        // Use the active path (which could be a worktree) for loading conflicts
+        let active_str = class.active_path.display().to_string();
+        (class.active_path, Some(active_str), !class.is_main)
+    } else {
+        // Fallback: treat as regular repo
+        (repo_path, None, false)
+    };
+    
+    let repo = resolve_and_cache_active_repository(&app, &repo_root)?;
+    load_active_repository_payload(&app, &repo, active_worktree_path, should_expand)
 }
 
 #[tauri::command]
 fn refresh_active_repository(app: tauri::AppHandle) -> Result<ActiveRepositoryPayload, String> {
     let repo = active_repository(&app)?;
-    load_active_repository_payload(&app, &repo)
+    load_active_repository_payload(&app, &repo, None, false)
+}
+
+#[tauri::command]
+fn list_worktrees(path: String) -> Result<Vec<git::WorktreeInfo>, String> {
+    let repo_path = PathBuf::from(&path);
+    git::list_worktrees(&repo_path).map_err(|err| err.to_string())
 }
 
 #[tauri::command]
@@ -337,6 +375,7 @@ pub fn run() {
             open_repository,
             activate_repository,
             refresh_active_repository,
+            list_worktrees,
             get_conflict_file,
             get_conflict_count,
             save_conflict_file,

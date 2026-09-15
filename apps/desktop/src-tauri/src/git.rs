@@ -1,10 +1,27 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use serde::Serialize;
 
 #[derive(Debug, Clone)]
 pub struct RepoPaths {
     pub root: PathBuf,
     pub git_dir: PathBuf,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeInfo {
+    pub path: String,
+    pub branch: Option<String>,
+    pub is_main: bool,
+    pub locked: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct LaunchPathClassification {
+    pub main_path: PathBuf,
+    pub active_path: PathBuf,
+    pub is_main: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -181,4 +198,122 @@ fn print_cli_error(message: &str) {
 fn print_cli_error(message: &str) {
     eprintln!("{message}");
     let _ = std::io::Write::flush(&mut std::io::stderr());
+}
+
+/// List all worktrees for a given repository
+pub fn list_worktrees(repo_path: &Path) -> Result<Vec<WorktreeInfo>, RepoError> {
+    let mut cmd = Command::new("git");
+    cmd.args(["-C", &repo_path.to_string_lossy(), "worktree", "list", "--porcelain"]);
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let output = cmd.output().map_err(|err| {
+        if err.kind() == std::io::ErrorKind::NotFound {
+            RepoError::GitNotFound
+        } else {
+            RepoError::Failed {
+                message: err.to_string(),
+            }
+        }
+    })?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(RepoError::Failed {
+            message: format!("git worktree list 失败: {}", stderr),
+        });
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_worktree_list_porcelain(&stdout)
+}
+
+fn parse_worktree_list_porcelain(output: &str) -> Result<Vec<WorktreeInfo>, RepoError> {
+    let mut worktrees = Vec::new();
+    let mut current_path: Option<String> = None;
+    let mut current_branch: Option<String> = None;
+    let mut current_locked = false;
+    let mut is_first = true;
+
+    for line in output.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            // 空行表示一个 worktree 条目结束
+            if let Some(path) = current_path.take() {
+                worktrees.push(WorktreeInfo {
+                    path,
+                    branch: current_branch.take(),
+                    is_main: is_first,
+                    locked: current_locked,
+                });
+                is_first = false;
+                current_locked = false;
+            }
+        } else if let Some(path) = line.strip_prefix("worktree ") {
+            current_path = Some(path.to_string());
+        } else if let Some(branch_ref) = line.strip_prefix("branch ") {
+            // branch refs/heads/main -> main
+            let branch_name = branch_ref
+                .strip_prefix("refs/heads/")
+                .unwrap_or(branch_ref);
+            current_branch = Some(branch_name.to_string());
+        } else if line.starts_with("locked") {
+            current_locked = true;
+        }
+        // 忽略其他字段如 HEAD, bare, detached
+    }
+
+    // 处理最后一个 worktree（如果没有尾随空行）
+    if let Some(path) = current_path {
+        worktrees.push(WorktreeInfo {
+            path,
+            branch: current_branch,
+            is_main: is_first,
+            locked: current_locked,
+        });
+    }
+
+    Ok(worktrees)
+}
+
+/// Resolve the main worktree path from any path within a repository
+pub fn resolve_main_worktree_path(path: &Path) -> Result<PathBuf, RepoError> {
+    let worktrees = list_worktrees(path)?;
+    worktrees
+        .into_iter()
+        .find(|w| w.is_main)
+        .map(|w| PathBuf::from(w.path))
+        .ok_or_else(|| RepoError::Failed {
+            message: "未找到主工作树".to_string(),
+        })
+}
+
+/// Classify a launch path: determine main repo path, active worktree path, and whether it's the main worktree
+pub fn classify_launch_path(path: &Path) -> Result<LaunchPathClassification, RepoError> {
+    let repo_paths = resolve_repo_paths(path)?;
+    let active_path = repo_paths.root.clone();
+    
+    // List all worktrees to find the main one
+    let worktrees = list_worktrees(&active_path)?;
+    
+    let main_worktree = worktrees
+        .iter()
+        .find(|w| w.is_main)
+        .ok_or_else(|| RepoError::Failed {
+            message: "未找到主工作树".to_string(),
+        })?;
+    
+    let main_path = PathBuf::from(&main_worktree.path);
+    let is_main = main_path == active_path;
+    
+    Ok(LaunchPathClassification {
+        main_path,
+        active_path,
+        is_main,
+    })
 }

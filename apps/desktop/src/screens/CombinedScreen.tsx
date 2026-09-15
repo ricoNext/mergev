@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import type { AppView } from "@mergev/merge-ui/types";
+import { invoke } from "@tauri-apps/api/core";
+import type { AppView, WorktreeItem } from "@mergev/merge-ui/types";
 import type { Theme } from "@mergev/merge-ui/theme";
 import { RepositoryListContent } from "../components/RepositoryListContent";
 import { StatusCell } from "../components/StatusCell";
 import { useHomeDir } from "../hooks/useHomeDir";
-import { fileNameOf, dirOf } from "@mergev/merge-ui/utils/stringUtils";
+import { fileNameOf, dirOf, formatDisplayPath } from "@mergev/merge-ui/utils/stringUtils";
 import { listen } from "@tauri-apps/api/event";
 
 export function CombinedScreen({
@@ -12,6 +13,7 @@ export function CombinedScreen({
   theme: _theme,
   onToggleTheme,
   onSwitchRepository,
+  onToggleExpanded,
   onSelect,
   onRemoveRepository,
   onAddRepository,
@@ -24,6 +26,7 @@ export function CombinedScreen({
   theme: Theme;
   onToggleTheme: (theme: Theme) => void;
   onSwitchRepository: (path: string) => void;
+  onToggleExpanded: (path: string) => void;
   onSelect: (path: string) => void;
   onRemoveRepository: (path: string) => void;
   onAddRepository: () => void;
@@ -32,9 +35,10 @@ export function CombinedScreen({
   onOpenPath: (path: string) => void;
   onClose: () => void;
 }) {
-  const { repos, activeRepoPath, workspace, selectedFilePath, busy, actionError } = view;
+  const { repos, activeRepoPath, activeWorktreePath, expandedRepoPaths, workspace, selectedFilePath, busy, actionError } = view;
   const selectedFile = workspace?.files.find((f) => f.path === selectedFilePath);
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
+  const [worktreesCache, setWorktreesCache] = useState<Record<string, WorktreeItem[]>>({});
   const homeDir = useHomeDir();
 
   useEffect(() => {
@@ -44,6 +48,25 @@ export function CombinedScreen({
       return () => window.removeEventListener("click", handleClick);
     }
   }, [menuOpen]);
+
+  // Load worktrees for expanded repos
+  useEffect(() => {
+    async function loadWorktrees() {
+      for (const repoPath of expandedRepoPaths) {
+        if (!worktreesCache[repoPath]) {
+          try {
+            const worktrees = await invoke<WorktreeItem[]>("list_worktrees", {
+              path: repoPath,
+            });
+            setWorktreesCache((prev) => ({ ...prev, [repoPath]: worktrees }));
+          } catch (error) {
+            console.error("Failed to load worktrees for", repoPath, error);
+          }
+        }
+      }
+    }
+    void loadWorktrees();
+  }, [expandedRepoPaths, worktreesCache]);
 
   // 监听来自菜单的主题切换事件
   useEffect(() => {
@@ -74,74 +97,124 @@ export function CombinedScreen({
               <p className="muted">暂无历史仓库</p>
             </div>
           ) : (
-            repos.map((repo) => (
-              <div
-                key={repo.path}
-                className={
-                  repo.path === activeRepoPath
-                    ? "repository-item active"
-                    : "repository-item"
-                }
-              >
-                <div
-                  className="repository-info"
-                  onClick={() => onSwitchRepository(repo.path)}
-                >
-                  <RepositoryListContent repo={repo} homeDir={homeDir} />
-                </div>
-                <div className="repository-actions">
-                  <button
-                    type="button"
-                    className="repository-menu-trigger"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setMenuOpen(menuOpen === repo.path ? null : repo.path);
-                    }}
+            repos.map((repo) => {
+              const isExpanded = expandedRepoPaths.includes(repo.path);
+              const worktrees = worktreesCache[repo.path] || [];
+              const linkedWorktrees = worktrees.filter((w) => !w.isMain);
+              const hasWorktrees = linkedWorktrees.length > 0;
+
+              return (
+                <div key={repo.path} className="repository-group">
+                  <div
+                    className={
+                      repo.path === activeRepoPath
+                        ? "repository-item active"
+                        : "repository-item"
+                    }
                   >
-                    ⋯
-                  </button>
-                  {menuOpen === repo.path && (
-                    <div className="repository-menu">
+                    {hasWorktrees && (
                       <button
                         type="button"
-                        className="repository-menu-item"
+                        className="repository-expand-button"
                         onClick={(e) => {
                           e.stopPropagation();
-                          navigator.clipboard.writeText(repo.path);
-                          setMenuOpen(null);
+                          onToggleExpanded(repo.path);
                         }}
                       >
-                        复制路径
+                        {isExpanded ? "▾" : "▸"}
                       </button>
-                      {repo.branch && (
-                        <button
-                          type="button"
-                          className="repository-menu-item"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            navigator.clipboard.writeText(repo.branch!);
-                            setMenuOpen(null);
-                          }}
-                        >
-                          复制分支
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        className="repository-menu-item danger"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onRemoveRepository(repo.path);
-                          setMenuOpen(null);
-                        }}
-                      >
-                        从列表中移除
-                      </button>
+                    )}
+                    <div
+                      className="repository-info"
+                      onClick={() => onSwitchRepository(repo.path)}
+                      style={{ marginLeft: hasWorktrees ? "0" : "24px" }}
+                    >
+                      <RepositoryListContent repo={repo} homeDir={homeDir} />
                     </div>
-                  )}
+                    <div className="repository-actions">
+                      <button
+                        type="button"
+                        className="repository-menu-trigger"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setMenuOpen(menuOpen === repo.path ? null : repo.path);
+                        }}
+                      >
+                        ⋯
+                      </button>
+                      {menuOpen === repo.path && (
+                        <div className="repository-menu">
+                          <button
+                            type="button"
+                            className="repository-menu-item"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigator.clipboard.writeText(repo.path);
+                              setMenuOpen(null);
+                            }}
+                          >
+                            复制路径
+                          </button>
+                          {repo.branch && (
+                            <button
+                              type="button"
+                              className="repository-menu-item"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                navigator.clipboard.writeText(repo.branch!);
+                                setMenuOpen(null);
+                              }}
+                            >
+                              复制分支
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="repository-menu-item danger"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onRemoveRepository(repo.path);
+                              setMenuOpen(null);
+                            }}
+                          >
+                            从列表中移除
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {isExpanded &&
+                    linkedWorktrees.map((worktree) => (
+                      <div
+                        key={worktree.path}
+                        className={
+                          worktree.path === activeWorktreePath
+                            ? "worktree-item active"
+                            : "worktree-item"
+                        }
+                        onClick={() => onSwitchRepository(worktree.path)}
+                      >
+                        <div className="worktree-info">
+                          <span className="worktree-path">
+                            {formatDisplayPath(worktree.path, homeDir)}
+                          </span>
+                          {worktree.branch && (
+                            <span className="worktree-branch">
+                              {worktree.branch}
+                            </span>
+                          )}
+                          {worktree.hasConflicts && (
+                            <span className="worktree-conflict-indicator" title="有冲突">
+                              ●
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       </aside>

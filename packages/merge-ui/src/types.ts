@@ -114,17 +114,28 @@ export type MergeUndoEntry = {
   dirty: boolean;
 };
 
+export type WorktreeItem = {
+  path: string;
+  branch?: string;
+  isMain: boolean;
+  locked?: boolean;
+  hasConflicts?: boolean;
+};
+
 export type RepositoryItem = {
   path: string;
   name: string;
   lastOpened: string;
   branch?: string;
   hasConflicts?: boolean;
+  worktrees?: WorktreeItem[];
 };
 
 export type ActiveRepositoryPayload = {
   workspace: WorkspaceSnapshot;
   repos: RepositoryItem[];
+  activeWorktreePath?: string;
+  expandedRepoPaths?: string[];
 };
 
 export type AppView =
@@ -143,6 +154,8 @@ export type AppView =
       kind: "combined";
       repos: RepositoryItem[];
       activeRepoPath: string | null;
+      activeWorktreePath: string | null;
+      expandedRepoPaths: string[];
       workspace: WorkspaceSnapshot | null;
       selectedFilePath: string | null;
       busy: boolean;

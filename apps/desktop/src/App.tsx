@@ -144,6 +144,8 @@ function App() {
     try {
       // 判断激活仓库：MERGEV_CWD > 第一个仓库
       let activeRepoPath: string | null = null;
+      let activeWorktreePath: string | null = null;
+      let expandedRepoPaths: string[] = [];
       const mergev_cwd = await invoke<string | null>("get_mergev_cwd");
       let workspace: WorkspaceSnapshot | null = null;
       let repos: RepositoryItem[] = [];
@@ -156,10 +158,13 @@ function App() {
           workspace = sortWorkspaceFiles(activated.workspace);
           repos = activated.repos;
           activeRepoPath = workspace.root || mergev_cwd;
+          activeWorktreePath = activated.activeWorktreePath || activeRepoPath;
+          expandedRepoPaths = activated.expandedRepoPaths || [];
         } catch (error) {
           console.error("Failed to load repository:", error);
           workspace = null;
           activeRepoPath = null;
+          activeWorktreePath = null;
         }
       }
 
@@ -177,6 +182,8 @@ function App() {
           workspace = sortWorkspaceFiles(activated.workspace);
           repos = activated.repos;
           activeRepoPath = workspace.root || activeRepoPath;
+          activeWorktreePath = activated.activeWorktreePath || activeRepoPath;
+          expandedRepoPaths = activated.expandedRepoPaths || [];
         } catch (error) {
           console.error("Failed to load repository:", error);
           workspace = null;
@@ -192,6 +199,8 @@ function App() {
         kind: "combined",
         repos,
         activeRepoPath,
+        activeWorktreePath: activeWorktreePath || activeRepoPath,
+        expandedRepoPaths,
         workspace,
         selectedFilePath,
         busy: false,
@@ -232,6 +241,8 @@ function App() {
         kind: "combined",
         repos: refreshed.repos,
         activeRepoPath: workspace.root,
+        activeWorktreePath: workspace.root,
+        expandedRepoPaths: [],
         workspace,
         selectedFilePath,
         busy: false,
@@ -323,6 +334,8 @@ function App() {
             ...current,
             repos,
             activeRepoPath: null,
+            activeWorktreePath: null,
+            expandedRepoPaths: [],
             workspace: null,
             selectedFilePath: null,
             busy: false,
@@ -351,6 +364,8 @@ function App() {
             ...current,
             repos: activated.repos,
             activeRepoPath: workspace.root || nextRepoPath,
+            activeWorktreePath: workspace.root || nextRepoPath,
+            expandedRepoPaths: [],
             workspace,
             selectedFilePath,
             busy: false,
@@ -372,6 +387,8 @@ function App() {
             ...current,
             repos,
             activeRepoPath: null,
+            activeWorktreePath: null,
+            expandedRepoPaths: [],
             workspace: null,
             selectedFilePath: null,
             busy: false,
@@ -427,6 +444,8 @@ function App() {
           kind: "combined",
           repos: activated.repos,
           activeRepoPath: workspace.root || path,
+          activeWorktreePath: workspace.root || path,
+          expandedRepoPaths: [],
           workspace,
           selectedFilePath: firstConflictPath(workspace),
           busy: false,
@@ -505,6 +524,20 @@ function App() {
     }
   }
 
+  function toggleRepoExpanded(repoPath: string) {
+    if (view.kind !== "combined") {
+      return;
+    }
+
+    const expanded = view.expandedRepoPaths;
+    const isExpanded = expanded.includes(repoPath);
+    const newExpanded = isExpanded
+      ? expanded.filter((p) => p !== repoPath)
+      : [...expanded, repoPath];
+
+    setView({ ...view, expandedRepoPaths: newExpanded });
+  }
+
   function selectConflictFile(path: string) {
     if (view.kind !== "conflicts") {
       return;
@@ -555,7 +588,7 @@ function App() {
     const requestId = ++repoRequestRef.current;
     setView((current) =>
       current.kind === "combined"
-        ? { ...current, activeRepoPath: repoPath, busy: true, actionError: null }
+        ? { ...current, activeRepoPath: repoPath, activeWorktreePath: repoPath, busy: true, actionError: null }
         : current,
     );
 
@@ -568,13 +601,17 @@ function App() {
       }
       const workspace = sortWorkspaceFiles(activated.workspace);
       const selectedFilePath = firstConflictPath(workspace);
+      const activeRepoPath = workspace.root || repoPath;
+      const activeWorktreePath = activated.activeWorktreePath || activeRepoPath;
 
       setView((current) =>
         current.kind === "combined"
           ? {
               ...current,
               repos: activated.repos,
-              activeRepoPath: workspace.root || repoPath,
+              activeRepoPath,
+              activeWorktreePath,
+              expandedRepoPaths: activated.expandedRepoPaths || [],
               workspace,
               selectedFilePath,
               busy: false,
@@ -617,6 +654,8 @@ function App() {
         kind: "combined",
         repos: activated.repos,
         activeRepoPath: workspace.root || repoPath,
+        activeWorktreePath: workspace.root || repoPath,
+        expandedRepoPaths: [],
         workspace,
         selectedFilePath,
         busy: false,
@@ -757,6 +796,7 @@ function App() {
         theme={theme}
         onToggleTheme={toggleTheme}
         onSwitchRepository={(path) => void switchRepository(path)}
+        onToggleExpanded={toggleRepoExpanded}
         onSelect={selectCombinedFile}
         onRemoveRepository={(path) => void removeRepository(path)}
         onAddRepository={() => void addRepository()}

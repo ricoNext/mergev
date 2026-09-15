@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::git;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepositoryItem {
@@ -11,6 +13,8 @@ pub struct RepositoryItem {
     pub last_opened: String,
     pub branch: Option<String>,
     pub has_conflicts: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worktrees: Option<Vec<git::WorktreeInfo>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,8 +59,12 @@ pub fn update_repository_status(
     branch: Option<String>,
     has_conflicts: Option<bool>,
 ) -> Result<(), String> {
-    let root_str = repo_root.display().to_string();
-    let name = repo_root
+    // Normalize to main worktree path
+    let main_path = git::resolve_main_worktree_path(repo_root)
+        .unwrap_or_else(|_| repo_root.to_path_buf());
+    
+    let root_str = main_path.display().to_string();
+    let name = main_path
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("unknown")
@@ -70,6 +78,7 @@ pub fn update_repository_status(
         last_opened,
         branch,
         has_conflicts,
+        worktrees: None,
     };
 
     if let Some(existing) = history
@@ -97,17 +106,38 @@ pub fn get_recent_repositories() -> Result<Vec<RepositoryItem>, String> {
     let updated: Vec<RepositoryItem> = history
         .repositories
         .into_iter()
-        .filter_map(|item| {
+        .filter_map(|mut item| {
             let path = PathBuf::from(&item.path);
             if !path.exists() {
                 return None; // 过滤掉不存在的仓库
+            }
+
+            // Migrate old worktree paths to main repo paths
+            if let Ok(main_path) = git::resolve_main_worktree_path(&path) {
+                let main_str = main_path.display().to_string();
+                if main_str != item.path {
+                    // This was a linked worktree path, update it to main
+                    item.path = main_str;
+                    item.name = main_path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+                }
             }
 
             Some(item)
         })
         .collect();
 
-    Ok(updated)
+    // Deduplicate by path (in case migration created duplicates)
+    let mut seen = std::collections::HashSet::new();
+    let deduplicated: Vec<RepositoryItem> = updated
+        .into_iter()
+        .filter(|item| seen.insert(item.path.clone()))
+        .collect();
+
+    Ok(deduplicated)
 }
 
 pub fn remove_repository(repo_path: &str) -> Result<(), String> {
