@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone)]
 pub struct RepoPaths {
@@ -8,7 +8,7 @@ pub struct RepoPaths {
     pub git_dir: PathBuf,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorktreeInfo {
     pub path: String,
@@ -233,6 +233,45 @@ pub fn list_worktrees(repo_path: &Path) -> Result<Vec<WorktreeInfo>, RepoError> 
     parse_worktree_list_porcelain(&stdout)
 }
 
+/// Run a git command in `cwd` and return trimmed stdout on success.
+fn run_git(cwd: &Path, args: &[&str], label: &str) -> Result<String, RepoError> {
+    let mut cmd = Command::new("git");
+    cmd.arg("-C").arg(cwd).args(args);
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let output = cmd.output().map_err(|err| {
+        if err.kind() == std::io::ErrorKind::NotFound {
+            RepoError::GitNotFound
+        } else {
+            RepoError::Failed {
+                message: err.to_string(),
+            }
+        }
+    })?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(RepoError::Failed {
+            message: format!("{label} 失败: {stderr}"),
+        });
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Canonicalize a path for comparison; fall back to the original path when the
+/// target does not exist. Avoids false negatives from symlinks
+/// (e.g. macOS `/var` vs `/private/var`) and trailing separators.
+pub fn normalize_path(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
 fn parse_worktree_list_porcelain(output: &str) -> Result<Vec<WorktreeInfo>, RepoError> {
     let mut worktrees = Vec::new();
     let mut current_path: Option<String> = None;
@@ -279,6 +318,85 @@ fn parse_worktree_list_porcelain(output: &str) -> Result<Vec<WorktreeInfo>, Repo
     }
 
     Ok(worktrees)
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeStatus {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    /// 未提交的修改数（含未跟踪文件）
+    pub uncommitted_changes: usize,
+    /// 仅存在于当前分支、未合并到任何其他分支/远程的提交数
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unmerged_commits: Option<usize>,
+}
+
+/// Check a worktree's branch state before removal:
+/// uncommitted changes and commits unique to its branch.
+pub fn worktree_status(worktree_path: &Path) -> Result<WorktreeStatus, RepoError> {
+    let branch = run_git(
+        worktree_path,
+        &["rev-parse", "--abbrev-ref", "HEAD"],
+        "git rev-parse",
+    )
+    .ok()
+    .filter(|name| name != "HEAD");
+
+    let porcelain = run_git(worktree_path, &["status", "--porcelain"], "git status")?;
+    let uncommitted_changes = porcelain.lines().filter(|l| !l.trim().is_empty()).count();
+
+    let unmerged_commits = branch.as_ref().and_then(|branch| {
+        let args = [
+            "rev-list".to_string(),
+            "--count".to_string(),
+            "--exclude".to_string(),
+            format!("refs/heads/{branch}"),
+            "--branches".to_string(),
+            "--remotes".to_string(),
+            "HEAD".to_string(),
+        ];
+        let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        run_git(worktree_path, &arg_refs, "git rev-list")
+            .ok()
+            .and_then(|out| out.trim().parse::<usize>().ok())
+    });
+
+    Ok(WorktreeStatus {
+        branch,
+        uncommitted_changes,
+        unmerged_commits,
+    })
+}
+
+/// Remove a worktree. The path is validated against the repo's worktree list
+/// before running the removal.
+pub fn remove_worktree(
+    repo_root: &Path,
+    worktree_path: &Path,
+    force: bool,
+) -> Result<(), RepoError> {
+    let worktrees = list_worktrees(repo_root)?;
+    let is_known = worktrees
+        .iter()
+        .any(|w| normalize_path(Path::new(&w.path)) == normalize_path(worktree_path));
+    if !is_known {
+        return Err(RepoError::Failed {
+            message: format!(
+                "指定的路径不是该仓库的 worktree: {}",
+                worktree_path.display()
+            ),
+        });
+    }
+
+    let mut args = vec!["worktree".to_string(), "remove".to_string()];
+    if force {
+        args.push("--force".to_string());
+    }
+    args.push(worktree_path.display().to_string());
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    run_git(repo_root, &arg_refs, "git worktree remove")?;
+    Ok(())
 }
 
 /// Resolve the main worktree path from any path within a repository

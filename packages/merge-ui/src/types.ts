@@ -122,6 +122,15 @@ export type WorktreeItem = {
   hasConflicts?: boolean;
 };
 
+/** 删除前检查的 worktree 分支状态 */
+export type WorktreeStatus = {
+  branch?: string;
+  /** 未提交的修改数（含未跟踪文件） */
+  uncommittedChanges: number;
+  /** 仅存在于当前分支、未合并到任何其他分支/远程的提交数 */
+  unmergedCommits?: number;
+};
+
 export type RepositoryItem = {
   path: string;
   name: string;

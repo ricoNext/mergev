@@ -244,6 +244,17 @@ fn list_worktrees(path: String) -> Result<Vec<git::WorktreeInfo>, String> {
 }
 
 #[tauri::command]
+fn worktree_status(worktree_path: String) -> Result<git::WorktreeStatus, String> {
+    git::worktree_status(&PathBuf::from(&worktree_path)).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn remove_worktree(repo_root: String, worktree_path: String, force: bool) -> Result<(), String> {
+    let root = resolve_repo_root_arg(&repo_root)?;
+    git::remove_worktree(&root, &PathBuf::from(&worktree_path), force).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
 fn get_conflict_file(repo_root: String, path: String) -> Result<ConflictFileDetail, String> {
     let root = resolve_repo_root_arg(&repo_root)?;
     workspace::load_conflict_file(&root, &path)
@@ -376,6 +387,8 @@ pub fn run() {
             activate_repository,
             refresh_active_repository,
             list_worktrees,
+            worktree_status,
+            remove_worktree,
             get_conflict_file,
             get_conflict_count,
             save_conflict_file,

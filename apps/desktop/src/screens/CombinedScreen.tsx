@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { AppView, WorktreeItem } from "@mergev/merge-ui/types";
+import type { AppView, WorktreeItem, WorktreeStatus } from "@mergev/merge-ui/types";
 import type { Theme } from "@mergev/merge-ui/theme";
 import { RepositoryListContent } from "../components/RepositoryListContent";
 import { StatusCell } from "../components/StatusCell";
 import { useHomeDir } from "../hooks/useHomeDir";
 import { fileNameOf, dirOf, formatDisplayPath } from "@mergev/merge-ui/utils/stringUtils";
 import { listen } from "@tauri-apps/api/event";
+import { confirm } from "@tauri-apps/plugin-dialog";
 
 export function CombinedScreen({
   view,
@@ -38,16 +39,78 @@ export function CombinedScreen({
   const { repos, activeRepoPath, activeWorktreePath, expandedRepoPaths, workspace, selectedFilePath, busy, actionError } = view;
   const selectedFile = workspace?.files.find((f) => f.path === selectedFilePath);
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
+  const [worktreeMenu, setWorktreeMenu] = useState<{ repoPath: string; path: string; x: number; y: number } | null>(null);
   const [worktreesCache, setWorktreesCache] = useState<Record<string, WorktreeItem[]>>({});
   const homeDir = useHomeDir();
 
   useEffect(() => {
-    const handleClick = () => setMenuOpen(null);
-    if (menuOpen) {
+    const handleClick = () => {
+      setMenuOpen(null);
+      setWorktreeMenu(null);
+    };
+    if (menuOpen || worktreeMenu) {
       window.addEventListener("click", handleClick);
       return () => window.removeEventListener("click", handleClick);
     }
-  }, [menuOpen]);
+  }, [menuOpen, worktreeMenu]);
+
+  // 删除 worktree：先检查分支状态，再按结果弹出确认，最后执行删除并刷新列表
+  async function handleRemoveWorktree(repoPath: string, worktreePath: string) {
+    setWorktreeMenu(null);
+    try {
+      const status = await invoke<WorktreeStatus>("worktree_status", {
+        worktreePath,
+      });
+
+      const warnings: string[] = [];
+      if (status.uncommittedChanges > 0) {
+        warnings.push(`有 ${status.uncommittedChanges} 个未提交的修改`);
+      }
+      if (status.unmergedCommits && status.unmergedCommits > 0) {
+        warnings.push(
+          `分支 ${status.branch ?? "HEAD"} 上有 ${status.unmergedCommits} 个未合并的提交`,
+        );
+      }
+
+      const message = warnings.length
+        ? `该 worktree ${warnings.join("，")}。\n删除后这些改动将无法恢复，确定要删除吗？`
+        : "该 worktree 工作区是干净的，分支状态正常。\n确定要删除吗？（分支本身不会被删除）";
+
+      const ok = await confirm(message, {
+        title: "删除 worktree",
+        kind: "warning",
+        okLabel: "删除",
+        cancelLabel: "取消",
+      });
+      if (!ok) {
+        return;
+      }
+
+      // 工作区不干净时 git worktree remove 需要 --force
+      const force = status.uncommittedChanges > 0;
+      await invoke("remove_worktree", { repoRoot: repoPath, worktreePath, force });
+
+      // 使缓存失效，副作用effect会重新拉取最新的 worktree 列表
+      setWorktreesCache((prev) => {
+        const next = { ...prev };
+        delete next[repoPath];
+        return next;
+      });
+
+      // 删除的是当前激活的 worktree 时，切回主仓库
+      if (worktreePath === activeWorktreePath) {
+        onSwitchRepository(repoPath);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await confirm(message, {
+        title: "删除 worktree 失败",
+        kind: "error",
+        okLabel: "确定",
+        cancelLabel: "",
+      });
+    }
+  }
 
   // Load worktrees for expanded repos
   useEffect(() => {
@@ -99,7 +162,9 @@ export function CombinedScreen({
           ) : (
             repos.map((repo) => {
               const isExpanded = expandedRepoPaths.includes(repo.path);
-              const worktrees = worktreesCache[repo.path] || [];
+              // 优先用展开时拉取的最新数据，否则回退到历史记录里持久化的
+              // worktree 列表，保证箭头在未展开时也能正确渲染。
+              const worktrees = worktreesCache[repo.path] ?? repo.worktrees ?? [];
               const linkedWorktrees = worktrees.filter((w) => !w.isMain);
               const hasWorktrees = linkedWorktrees.length > 0;
 
@@ -112,10 +177,21 @@ export function CombinedScreen({
                         : "repository-item"
                     }
                   >
-                    {hasWorktrees && (
+                    <div
+                      className="repository-info"
+                      onClick={() => onSwitchRepository(repo.path)}
+                    >
+                      <RepositoryListContent repo={repo} homeDir={homeDir} />
+                    </div>
+                    <div className="repository-actions">
                       <button
                         type="button"
-                        className="repository-expand-button"
+                        className={
+                          hasWorktrees
+                            ? "repository-expand-button"
+                            : "repository-expand-button is-hidden"
+                        }
+                        disabled={!hasWorktrees}
                         onClick={(e) => {
                           e.stopPropagation();
                           onToggleExpanded(repo.path);
@@ -123,15 +199,6 @@ export function CombinedScreen({
                       >
                         {isExpanded ? "▾" : "▸"}
                       </button>
-                    )}
-                    <div
-                      className="repository-info"
-                      onClick={() => onSwitchRepository(repo.path)}
-                      style={{ marginLeft: hasWorktrees ? "0" : "24px" }}
-                    >
-                      <RepositoryListContent repo={repo} homeDir={homeDir} />
-                    </div>
-                    <div className="repository-actions">
                       <button
                         type="button"
                         className="repository-menu-trigger"
@@ -194,6 +261,16 @@ export function CombinedScreen({
                             : "worktree-item"
                         }
                         onClick={() => onSwitchRepository(worktree.path)}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setWorktreeMenu({
+                            repoPath: repo.path,
+                            path: worktree.path,
+                            x: e.clientX,
+                            y: e.clientY,
+                          });
+                        }}
                       >
                         <div className="worktree-info">
                           <span className="worktree-path">
@@ -333,6 +410,25 @@ export function CombinedScreen({
           </>
         )}
       </main>
+
+      {worktreeMenu && (
+        <div
+          className="context-menu"
+          style={{ left: worktreeMenu.x, top: worktreeMenu.y }}
+          onClick={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          <button
+            type="button"
+            className="context-menu-item danger"
+            onClick={() =>
+              void handleRemoveWorktree(worktreeMenu.repoPath, worktreeMenu.path)
+            }
+          >
+            删除 worktree
+          </button>
+        </div>
+      )}
     </div>
   );
 }

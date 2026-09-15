@@ -72,13 +72,15 @@ pub fn update_repository_status(
 
     let mut history = load_history()?;
     let last_opened = chrono::Local::now().to_rfc3339();
+    // 每次激活仓库时刷新该仓库的 worktree 列表，供前端渲染展开箭头
+    let worktrees = git::list_worktrees(&main_path).ok();
     let item = RepositoryItem {
         path: root_str.clone(),
         name,
         last_opened,
         branch,
         has_conflicts,
-        worktrees: None,
+        worktrees,
     };
 
     if let Some(existing) = history
@@ -100,15 +102,16 @@ pub fn update_repository_status(
 }
 
 pub fn get_recent_repositories() -> Result<Vec<RepositoryItem>, String> {
-    let history = load_history()?;
+    let mut history = load_history()?;
+    let mut changed = false;
 
-    // Keep this lightweight: startup should not rescan every historical repo.
     let updated: Vec<RepositoryItem> = history
         .repositories
-        .into_iter()
+        .drain(..)
         .filter_map(|mut item| {
             let path = PathBuf::from(&item.path);
             if !path.exists() {
+                changed = true;
                 return None; // 过滤掉不存在的仓库
             }
 
@@ -123,6 +126,20 @@ pub fn get_recent_repositories() -> Result<Vec<RepositoryItem>, String> {
                         .and_then(|n| n.to_str())
                         .unwrap_or("unknown")
                         .to_string();
+                    changed = true;
+                }
+            }
+
+            // Fill in the worktree list for old entries (once, then persisted)
+            // so the sidebar can render the expand arrow.
+            if item.worktrees.is_none() {
+                let scan_path = PathBuf::from(&item.path);
+                match git::list_worktrees(&scan_path) {
+                    Ok(worktrees) => {
+                        item.worktrees = Some(worktrees);
+                        changed = true;
+                    }
+                    Err(_) => {}
                 }
             }
 
@@ -136,6 +153,13 @@ pub fn get_recent_repositories() -> Result<Vec<RepositoryItem>, String> {
         .into_iter()
         .filter(|item| seen.insert(item.path.clone()))
         .collect();
+
+    // Persist migration results and newly filled worktree lists so the next
+    // startup does not repeat the scan.
+    if changed {
+        history.repositories = deduplicated.clone();
+        save_history(&history)?;
+    }
 
     Ok(deduplicated)
 }
