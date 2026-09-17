@@ -2,7 +2,7 @@
 
 [English](README.en.md) | 中文
 
-一个支持桌面应用和 VS Code 插件的 Git 冲突解决器，用三栏界面直观看 Yours、Theirs 和最终 Result。
+一个 Git 冲突解决桌面应用，用三栏界面直观看 Yours、Theirs 和最终 Result。
 
 <div align="center">
 
@@ -18,21 +18,24 @@
 
 ![](https://neptune-ipc.oss-cn-shenzhen.aliyuncs.com/img/20260714091840470.png)
 
-mergev 是一个专注于 Git 冲突解决的工具，提供独立桌面应用和 VS Code 插件两种入口。它把难读的冲突标记变成清晰的三栏可视化界面，让你像在专业 IDE 的合并窗口里一样，对比 Yours、Theirs 和最终 Result，逐块决定保留哪一边，最后一键保存并加入暂存区。
+mergev 是一个专注于 Git 冲突解决的桌面应用。它把难读的冲突标记变成清晰的三栏可视化界面，让你像在专业 IDE 的合并窗口里一样，对比 Yours、Theirs 和最终 Result，逐块决定保留哪一边，最后一键保存并加入暂存区。
+
+VS Code 插件已独立到 [ricoNext/mergev-vscode](https://github.com/ricoNext/mergev-vscode)（共享层已冻结，仅安全/严重 bug 回流）。
 
 如果你习惯在终端里 `merge`、`rebase`、`cherry-pick`，但不想在冲突出现时靠肉眼编辑 `<<<<<<<`、`=======`、`>>>>>>>`，mergev 就是为这个时刻准备的。
 
 ## 仓库结构
 
-本仓库使用 monorepo 管理桌面端和 VS Code 插件。两者可独立构建、打包与发布，共享的界面与 Rust 核心只维护一份。
+本仓库是桌面端产品仓；演进中的共享界面与 Rust 核心也在此维护。
 
 ```text
 apps/desktop/       Tauri 桌面端
-apps/vscode/        VS Code 插件与 Rust sidecar
-packages/merge-ui/  跨宿主复用的 React 合并界面与纯前端逻辑
-crates/mergev-core/ 跨宿主复用的 Rust Git 与合并核心
-scripts/            独立发布脚本
+packages/merge-ui/  React 合并界面与纯前端逻辑
+crates/mergev-core/ Rust Git 与合并核心
+scripts/            桌面发布脚本
 ```
+
+VS Code 插件仓库：https://github.com/ricoNext/mergev-vscode
 
 ## 为什么用 mergev
 
@@ -59,46 +62,10 @@ mergev 不想替代你的 IDE，也不想接管完整 Git 工作流。它只把�
 - 想在提交前更直观看到最终合并结果的团队
 - 使用 AI 编码工具后，需要人工确认合并结果的开发者
 
-## 选择使用方式
-
-| 入口 | 适合场景 | 支持的平台 |
-| --- | --- | --- |
-| 桌面应用 | 你在终端中执行 Git 命令，希望按需打开独立的冲突处理工具 | macOS、Windows、Linux |
-| VS Code 插件 | 你希望留在 VS Code 中处理当前工作区的冲突 | 本地 macOS、Windows |
-
-两种入口共用同一套合并核心与三栏界面；保存后都会将结果写回工作区并执行 `git add`。选择最贴合当前工作流的入口即可。
-
 ## VS Code 插件
 
-![VS Code 中的 mergev 三栏合并界面](https://neptune-ipc.oss-cn-shenzhen.aliyuncs.com/img/20260817100604704.png)
-
-### 安装与要求
-
-当前插件通过 VSIX 安装：在 VS Code 命令面板执行“Extensions: Install from VSIX...”，然后选择已获取的 `mergev-vscode-<版本号>.vsix` 文件。
-
-从源码构建 VSIX 时，在仓库根目录执行：
-
-```bash
-npm ci
-bun run package:vscode
-```
-
-生成的文件位于 `apps/vscode/`。
-
-- 支持 VS Code 1.85 及以上版本。
-- 支持 macOS（Apple Silicon、Intel）、Windows（x64、arm64）和 Linux（x64、arm64）工作区。
-- Git 必须可通过 `PATH` 访问；否则在设置中填写 `mergev.gitPath`。
-- 支持 Remote SSH、WSL、Dev Container 等远程工作区；Linux sidecar 使用 musl 静态链接。
-
-### 在 VS Code 中处理冲突
-
-1. 当 `merge`、`rebase` 或 `cherry-pick` 产生冲突后，打开对应的 VS Code 工作区。
-2. 点击 Activity Bar 中的 mergev 图标，展开仓库后选择冲突文件；也可在 Source Control 的 merge 分组中右键选择“使用 mergev 打开”。
-3. 在三栏界面中逐块选择 Yours、Theirs 或两侧都保留，也可以对整份文件执行 Accept Yours / Accept Theirs。
-4. 完成所有冲突块后点击保存。mergev 会写回文件并执行 `git add`，然后自动关闭 Tab。
-5. 回到终端继续原来的 Git 操作，例如 `git rebase --continue`。
-
-Result 始终只读。`Cmd+Z` / `Ctrl+Z` 可以撤销冲突决策，`Cmd+Shift+Z` / `Ctrl+Shift+Z` 可以恢复；`Cmd+S` / `Ctrl+S` 不会保存结果。关闭 Tab 后，未保存的冲突决策不会恢复。
+VS Code 插件已迁至独立仓库 [ricoNext/mergev-vscode](https://github.com/ricoNext/mergev-vscode)。
+安装、构建与发布请查看该仓库说明。本仓为桌面端产品仓。
 
 ## 桌面应用
 
@@ -234,12 +201,10 @@ git rebase --continue
 npm ci
 bun run dev:desktop
 bun run build:desktop
-bun run build:vscode
 bun run test
 bun run check:rust
-bun run package:vscode
 ```
 
-桌面端原生安装包使用 `bun run --filter mergev-desktop package` 构建，并通过 `desktop-vx.y.z` 标签触发 GitHub Actions 发布。VS Code 插件使用 `bun run package:vscode` 在 `apps/vscode/` 中生成 VSIX，随后手动上传至 Marketplace；`bun run release:vscode <版本号>` 用于更新版本、变更日志并创建 `vscode-vx.y.z` 标签。
+桌面端原生安装包使用 `bun run --filter mergev-desktop package` 构建，并通过 `desktop-vx.y.z` 标签触发 GitHub Actions 发布。VS Code 插件请使用 [mergev-vscode](https://github.com/ricoNext/mergev-vscode)。
 
 友情链接： [linux](https://linux.do)

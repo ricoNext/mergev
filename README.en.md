@@ -2,7 +2,7 @@
 
 [English](README.en.md) | [中文](README.md)
 
-A Git conflict resolver for desktop and VS Code, with a clear three-pane workflow for comparing Yours, Theirs, and the final Result.
+A Git conflict resolver desktop app, with a clear three-pane workflow for comparing Yours, Theirs, and the final Result.
 
 <div align="center">
 
@@ -20,7 +20,9 @@ A Git conflict resolver for desktop and VS Code, with a clear three-pane workflo
 
 ## Overview
 
-mergev focuses on the conflict-resolution part of a Git workflow. It is available as both a standalone desktop app and a VS Code extension. It turns hard-to-read conflict markers such as `<<<<<<<`, `=======`, and `>>>>>>>` into a visual merge interface where you can inspect both sides, make decisions block by block, and review the resulting file before saving it.
+mergev focuses on the conflict-resolution part of a Git workflow as a standalone desktop app. It turns hard-to-read conflict markers such as `<<<<<<<`, `=======`, and `>>>>>>>` into a visual merge interface where you can inspect both sides, make decisions block by block, and review the resulting file before saving it.
+
+The VS Code extension lives in [ricoNext/mergev-vscode](https://github.com/ricoNext/mergev-vscode) (shared layers frozen; security/critical fixes only).
 
 It works well with terminal-based workflows such as `merge`, `rebase`, and `cherry-pick`, without taking over the rest of your Git process.
 
@@ -37,46 +39,10 @@ It works well with terminal-based workflows such as `merge`, `rebase`, and `cher
 
 ![mergev merge view](https://neptune-ipc.oss-cn-shenzhen.aliyuncs.com/img/20260714091213003.png)
 
-## Choose an entry point
-
-| Entry point | Best for | Supported platforms |
-| --- | --- | --- |
-| Desktop app | Terminal-driven Git workflows where you want to launch a standalone resolver on demand | macOS, Windows, Linux |
-| VS Code extension | Resolving conflicts without leaving the active VS Code workspace | Local macOS and Windows |
-
-Both entry points share the same merge core and three-pane UI. Saving writes the result to the working tree and stages it with `git add`.
-
 ## VS Code extension
 
-![mergev three-pane view in VS Code](https://neptune-ipc.oss-cn-shenzhen.aliyuncs.com/img/20260817100604704.png)
-
-The extension is currently installed from a VSIX. Run **Extensions: Install from VSIX...** from the VS Code Command Palette, then select the provided `mergev-vscode-<version>.vsix` file.
-
-To build a VSIX from source, run the following commands from the repository root:
-
-```bash
-npm ci
-bun run package:vscode
-```
-
-The generated VSIX is written to `apps/vscode/`.
-
-### Requirements
-
-- VS Code 1.85 or later.
-- macOS (Apple Silicon or Intel), Windows (x64 or arm64), or Linux (x64 or arm64) workspaces.
-- Git available on `PATH`, or a path configured through `mergev.gitPath`.
-- Remote SSH, WSL, and Dev Containers are supported. The Linux sidecar is statically linked with musl.
-
-### Usage in VS Code
-
-1. Open a workspace with conflicts from a merge, rebase, or cherry-pick.
-2. Select the mergev icon in the Activity Bar and choose a conflicted file, or right-click a file in the Source Control merge group and select **Open with mergev**.
-3. Resolve each block with Yours, Theirs, or both sides, or use **Accept Yours** / **Accept Theirs** for the whole file.
-4. Click save after every block has a decision. mergev writes the file, runs `git add`, and closes the tab.
-5. Continue the Git operation in your terminal, such as `git rebase --continue`.
-
-Result is always read-only. `Cmd+Z` / `Ctrl+Z` undo merge decisions and `Cmd+Shift+Z` / `Ctrl+Shift+Z` redo them. `Cmd+S` / `Ctrl+S` does not save the result, and unsaved decisions are discarded when the tab closes.
+The VS Code extension has moved to [ricoNext/mergev-vscode](https://github.com/ricoNext/mergev-vscode).
+See that repository for install, build, and release docs. This repository is the desktop product.
 
 ## Desktop app
 
@@ -175,19 +141,16 @@ npm ci
 ```bash
 bun run dev:desktop
 bun run build:desktop
-bun run build:vscode
 bun run test
 bun run check:rust
-bun run package:vscode
 ```
 
-The repository is a monorepo with independent desktop and VS Code products:
+Repository layout:
 
 ```text
 apps/desktop/       Tauri desktop application
-apps/vscode/        VS Code extension and Rust sidecar
-packages/merge-ui/  Shared React merge UI and frontend logic
-crates/mergev-core/ Shared Rust Git and merge core
+packages/merge-ui/  React merge UI and frontend logic
+crates/mergev-core/ Rust Git and merge core
 ```
 
 To create native desktop installers, run:
@@ -196,8 +159,7 @@ To create native desktop installers, run:
 bun run --filter mergev-desktop package
 ```
 
-Desktop and extension releases use separate tags: `desktop-vx.y.z` and
-`vscode-vx.y.z`.
+Desktop releases use `desktop-vx.y.z` tags. The VS Code extension is maintained in [mergev-vscode](https://github.com/ricoNext/mergev-vscode).
 
 ## Typical workflow
 

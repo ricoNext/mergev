@@ -1,7 +1,6 @@
 [workspace]
 members = [
   "apps/desktop/src-tauri",
-  "apps/vscode/sidecar",
   "crates/mergev-core"
 ]
 resolver = "2"

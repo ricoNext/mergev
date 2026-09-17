@@ -40,7 +40,7 @@ jobs:
         run: npm ci
 
       - name: Type-check and build frontend
-        run: bun run build
+        run: bun run build:desktop
 
       - name: Check Tauri backend
         run: cargo check --workspace
