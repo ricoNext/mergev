@@ -106,7 +106,7 @@ export function ConflictsScreen({
             disabled={busy || !selected}
             onClick={onMerge}
           >
-            开始合并
+            开始合并2
           </button>
           {actionError ? <p className="error">{actionError}</p> : null}
           {selected ? (

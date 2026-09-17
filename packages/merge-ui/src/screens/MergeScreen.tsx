@@ -614,7 +614,7 @@ export function MergeScreen({
 
 	return (
 		<div className="workspace">
-			<header className="topbar">
+			<header className="topbar" data-tauri-drag-region>
 				<div className="topbar-main">
 					<div className="topbar-navigation">
 						<button

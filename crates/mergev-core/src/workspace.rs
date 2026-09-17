@@ -2165,6 +2165,49 @@ mod tests {
     }
 
     #[test]
+    fn linked_worktree_reports_its_own_conflicts() {
+        let fixture = GitFixture::new();
+
+        // 主 worktree 制造 conflict.txt 的合并冲突
+        git_run(&fixture.root, &["checkout", "-b", "mt-theirs"]).unwrap();
+        fs::write(fixture.root.join("conflict.txt"), "theirs\n").unwrap();
+        git_run(&fixture.root, &["commit", "-am", "theirs"]).unwrap();
+        git_run(&fixture.root, &["checkout", "-b", "mt", "HEAD~1"]).unwrap();
+        fs::write(fixture.root.join("conflict.txt"), "ours\n").unwrap();
+        git_run(&fixture.root, &["commit", "-am", "ours"]).unwrap();
+        assert!(git_run(&fixture.root, &["merge", "mt-theirs"]).is_err());
+
+        // linked worktree（分支 side）制造另一个文件 other.txt 的合并冲突
+        // 放在 fixture 内部，便于 Drop 统一清理
+        let linked = fixture.root.join("linked-root");
+        git_run(
+            &fixture.root,
+            &["worktree", "add", linked.to_str().unwrap(), "-b", "side"],
+        )
+        .unwrap();
+        fs::write(linked.join("other.txt"), "base\n").unwrap();
+        git_run(&linked, &["add", "other.txt"]).unwrap();
+        git_run(&linked, &["commit", "-m", "base other"]).unwrap();
+        git_run(&linked, &["checkout", "-b", "side-theirs"]).unwrap();
+        fs::write(linked.join("other.txt"), "side theirs\n").unwrap();
+        git_run(&linked, &["commit", "-am", "side theirs"]).unwrap();
+        git_run(&linked, &["checkout", "side"]).unwrap();
+        fs::write(linked.join("other.txt"), "side ours\n").unwrap();
+        git_run(&linked, &["commit", "-am", "side ours"]).unwrap();
+        assert!(git_run(&linked, &["merge", "side-theirs"]).is_err());
+
+        // 各自加载 workspace，应只看到自己的冲突文件
+        let main_workspace = load_workspace_from_root(&fixture.root).unwrap();
+        assert_eq!(main_workspace.files.len(), 1);
+        assert_eq!(main_workspace.files[0].path, "conflict.txt");
+
+        let linked_workspace = load_workspace_from_root(&linked).unwrap();
+        assert_eq!(linked_workspace.files.len(), 1);
+        assert_eq!(linked_workspace.files[0].path, "other.txt");
+        assert_eq!(linked_workspace.branch, "side");
+    }
+
+    #[test]
     fn saves_real_conflict_result_and_stages_file() {
         let fixture = GitFixture::new();
         fixture.create_modify_modify_conflict();

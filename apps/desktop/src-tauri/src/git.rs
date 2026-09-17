@@ -1,6 +1,6 @@
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone)]
 pub struct RepoPaths {
@@ -53,7 +53,10 @@ impl std::fmt::Display for RepoError {
 
 pub fn resolve_repo_paths(cwd: &Path) -> Result<RepoPaths, RepoError> {
     let output = git_rev_parse(cwd, &["--show-toplevel", "--absolute-git-dir"])?;
-    let mut lines = output.lines().map(str::trim).filter(|line| !line.is_empty());
+    let mut lines = output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty());
     let root = lines.next().ok_or_else(|| RepoError::Failed {
         message: "git rev-parse 返回空仓库路径".into(),
     })?;
@@ -203,7 +206,13 @@ fn print_cli_error(message: &str) {
 /// List all worktrees for a given repository
 pub fn list_worktrees(repo_path: &Path) -> Result<Vec<WorktreeInfo>, RepoError> {
     let mut cmd = Command::new("git");
-    cmd.args(["-C", &repo_path.to_string_lossy(), "worktree", "list", "--porcelain"]);
+    cmd.args([
+        "-C",
+        &repo_path.to_string_lossy(),
+        "worktree",
+        "list",
+        "--porcelain",
+    ]);
 
     #[cfg(windows)]
     {
@@ -297,9 +306,7 @@ fn parse_worktree_list_porcelain(output: &str) -> Result<Vec<WorktreeInfo>, Repo
             current_path = Some(path.to_string());
         } else if let Some(branch_ref) = line.strip_prefix("branch ") {
             // branch refs/heads/main -> main
-            let branch_name = branch_ref
-                .strip_prefix("refs/heads/")
-                .unwrap_or(branch_ref);
+            let branch_name = branch_ref.strip_prefix("refs/heads/").unwrap_or(branch_ref);
             current_branch = Some(branch_name.to_string());
         } else if line.starts_with("locked") {
             current_locked = true;
@@ -399,6 +406,136 @@ pub fn remove_worktree(
     Ok(())
 }
 
+/// Check whether a local branch exists in the repository.
+fn branch_exists(repo_root: &Path, branch: &str) -> Result<bool, RepoError> {
+    let mut cmd = Command::new("git");
+    cmd.arg("-C").arg(repo_root).args([
+        "show-ref",
+        "--verify",
+        "--quiet",
+        &format!("refs/heads/{branch}"),
+    ]);
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let output = cmd.output().map_err(|err| {
+        if err.kind() == std::io::ErrorKind::NotFound {
+            RepoError::GitNotFound
+        } else {
+            RepoError::Failed {
+                message: err.to_string(),
+            }
+        }
+    })?;
+    Ok(output.status.success())
+}
+
+/// List all local branch names (`refs/heads`), short form.
+pub fn list_local_branches(repo_root: &Path) -> Result<Vec<String>, RepoError> {
+    let output = run_git(
+        repo_root,
+        &[
+            "for-each-ref",
+            "refs/heads",
+            "--format=%(refname:short)",
+            "--sort=refname",
+        ],
+        "git for-each-ref",
+    )?;
+    Ok(output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(ToString::to_string)
+        .collect())
+}
+
+/// Create a worktree for `branch`. If the branch already exists it is checked
+/// out, otherwise a new branch is created at `base` (or HEAD when omitted).
+/// The worktree directory is placed under `parent_dir` (created if missing),
+/// or as a sibling of the main worktree when omitted, named `<repo>-<branch>`.
+pub fn add_worktree(
+    repo_root: &Path,
+    branch: &str,
+    base: Option<&str>,
+    parent_dir: Option<&Path>,
+) -> Result<WorktreeInfo, RepoError> {
+    let branch = branch.trim();
+    if branch.is_empty()
+        || branch.contains(char::is_whitespace)
+        || branch.starts_with('-')
+        || branch.contains("..")
+    {
+        return Err(RepoError::Failed {
+            message: format!("无效的分支名: {branch}"),
+        });
+    }
+
+    let main = resolve_main_worktree_path(repo_root)?;
+    let repo_name = main
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| RepoError::Failed {
+            message: "无法解析仓库名称".to_string(),
+        })?;
+    // 存放目录：优先使用调用方指定的（不存在则创建），否则主 worktree 的兄弟目录
+    let parent: PathBuf = match parent_dir {
+        Some(dir) => {
+            std::fs::create_dir_all(dir).map_err(|err| RepoError::Failed {
+                message: format!("无法创建存放目录 {}: {err}", dir.display()),
+            })?;
+            dir.to_path_buf()
+        }
+        None => main.parent().ok_or_else(|| RepoError::Failed {
+            message: "无法解析仓库父目录".to_string(),
+        })?.to_path_buf(),
+    };
+
+    // 目录名中不允许出现 /，用 - 代替；目标目录已存在时追加序号
+    let safe_branch = branch.replace('/', "-");
+    let base_name = format!("{repo_name}-{safe_branch}");
+    let mut target = parent.join(&base_name);
+    let mut n = 2;
+    while target.exists() {
+        target = parent.join(format!("{base_name}-{n}"));
+        n += 1;
+        if n > 100 {
+            return Err(RepoError::Failed {
+                message: "无法找到可用的工作树目录名".to_string(),
+            });
+        }
+    }
+
+    let exists = branch_exists(repo_root, branch)?;
+    let mut args = vec!["worktree".to_string(), "add".to_string()];
+    if !exists {
+        args.push("-b".to_string());
+        args.push(branch.to_string());
+    }
+    args.push(target.display().to_string());
+    if exists {
+        // 已有分支：直接检出（忽略 base）
+        args.push(branch.to_string());
+    } else if let Some(base) = base.map(str::trim).filter(|b| !b.is_empty()) {
+        // 新建分支：基于指定基点
+        args.push(base.to_string());
+    }
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    run_git(repo_root, &arg_refs, "git worktree add")?;
+
+    Ok(WorktreeInfo {
+        path: target.display().to_string(),
+        branch: Some(branch.to_string()),
+        is_main: false,
+        locked: false,
+    })
+}
+
 /// Resolve the main worktree path from any path within a repository
 pub fn resolve_main_worktree_path(path: &Path) -> Result<PathBuf, RepoError> {
     let worktrees = list_worktrees(path)?;
@@ -415,23 +552,180 @@ pub fn resolve_main_worktree_path(path: &Path) -> Result<PathBuf, RepoError> {
 pub fn classify_launch_path(path: &Path) -> Result<LaunchPathClassification, RepoError> {
     let repo_paths = resolve_repo_paths(path)?;
     let active_path = repo_paths.root.clone();
-    
+
     // List all worktrees to find the main one
     let worktrees = list_worktrees(&active_path)?;
-    
+
     let main_worktree = worktrees
         .iter()
         .find(|w| w.is_main)
         .ok_or_else(|| RepoError::Failed {
             message: "未找到主工作树".to_string(),
         })?;
-    
+
     let main_path = PathBuf::from(&main_worktree.path);
     let is_main = main_path == active_path;
-    
+
     Ok(LaunchPathClassification {
         main_path,
         active_path,
         is_main,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::process::Command;
+
+    struct TempRepo {
+        main: PathBuf,
+    }
+
+    impl TempRepo {
+        fn new() -> Self {
+            let unique = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let main = std::env::temp_dir().join(format!(
+                "mergev-git-rs-test-{}-{unique}",
+                std::process::id()
+            ));
+            fs::create_dir_all(&main).unwrap();
+            let git = |cwd: &Path, args: &[&str]| {
+                let out = Command::new("git")
+                    .arg("-C")
+                    .arg(cwd)
+                    .args(args)
+                    .output()
+                    .unwrap();
+                assert!(
+                    out.status.success(),
+                    "git {args:?} failed: {}",
+                    String::from_utf8_lossy(&out.stderr)
+                );
+            };
+            git(&main, &["init", "-q"]);
+            git(&main, &["config", "user.name", "t"]);
+            git(&main, &["config", "user.email", "t@t.test"]);
+            fs::write(main.join("a.txt"), "base\n").unwrap();
+            git(&main, &["add", "."]);
+            git(&main, &["commit", "-q", "-m", "base"]);
+            Self { main }
+        }
+
+        fn git(&self, args: &[&str]) {
+            let out = Command::new("git")
+                .arg("-C")
+                .arg(&self.main)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "git {args:?} failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+
+        fn write_and_commit_conflict_pair(&self, file: &str, ours: &str, theirs: &str, base: &str) {
+            // theirs 分支
+            self.git(&["checkout", "-q", "-b", &format!("{file}-theirs")]);
+            fs::write(self.main.join(file), format!("{theirs}\n")).unwrap();
+            self.git(&["commit", "-q", "-am", "theirs"]);
+            self.git(&["checkout", "-q", "-b", &format!("{file}-ours"), "HEAD~1"]);
+            fs::write(self.main.join(file), format!("{ours}\n")).unwrap();
+            self.git(&["commit", "-q", "-am", "ours"]);
+            assert!(!Command::new("git")
+                .arg("-C")
+                .arg(&self.main)
+                .arg("merge")
+                .arg(format!("{file}-theirs"))
+                .output()
+                .unwrap()
+                .status
+                .success());
+            let _ = base;
+        }
+    }
+
+    impl Drop for TempRepo {
+        fn drop(&mut self) {
+            let _ = Command::new("git")
+                .arg("-C")
+                .arg(&self.main)
+                .args(["worktree", "remove", "--force", "."])
+                .output();
+            let _ = fs::remove_dir_all(&self.main);
+        }
+    }
+
+    #[test]
+    fn classify_and_workspace_reflect_linked_worktree_conflicts() {
+        let repo = TempRepo::new();
+
+        // 主 worktree：a.txt 冲突
+        repo.write_and_commit_conflict_pair("a.txt", "ours-a", "theirs-a", "base-a");
+
+        // linked worktree：b.txt 冲突
+        let linked = repo.main.parent().unwrap().join(format!(
+            "{}-wt-side",
+            repo.main.file_name().unwrap().to_string_lossy()
+        ));
+        repo.git(&["worktree", "add", linked.to_str().unwrap(), "-b", "side"]);
+        let linked_git = |args: &[&str]| {
+            let out = Command::new("git")
+                .arg("-C")
+                .arg(&linked)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "git {args:?} failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        };
+        fs::write(linked.join("b.txt"), "base-b\n").unwrap();
+        linked_git(&["add", "b.txt"]);
+        linked_git(&["commit", "-q", "-m", "base b"]);
+        linked_git(&["checkout", "-q", "-b", "side-theirs"]);
+        fs::write(linked.join("b.txt"), "theirs-b\n").unwrap();
+        linked_git(&["commit", "-q", "-am", "theirs"]);
+        linked_git(&["checkout", "-q", "side"]);
+        fs::write(linked.join("b.txt"), "ours-b\n").unwrap();
+        linked_git(&["commit", "-q", "-am", "ours"]);
+        let merge = Command::new("git")
+            .arg("-C")
+            .arg(&linked)
+            .arg("merge")
+            .arg("side-theirs")
+            .output()
+            .unwrap();
+        assert!(
+            !merge.status.success(),
+            "expected conflict in linked worktree"
+        );
+
+        // 模拟 activate_repository 对 linked worktree 的处理
+        let classification = classify_launch_path(&linked).unwrap();
+        assert!(!classification.is_main);
+        assert_eq!(
+            normalize_path(&classification.active_path),
+            normalize_path(&linked)
+        );
+        let ws = mergev_core::load_workspace_from_root(&classification.active_path).unwrap();
+        assert_eq!(ws.branch, "side");
+        assert_eq!(ws.files.len(), 1, "linked workspace should only see b.txt");
+        assert_eq!(ws.files[0].path, "b.txt");
+
+        // 模拟 activate_repository 对主 worktree 的处理
+        let cm = classify_launch_path(&repo.main).unwrap();
+        assert!(cm.is_main);
+        let ws2 = mergev_core::load_workspace_from_root(&cm.active_path).unwrap();
+        assert_eq!(ws2.files.len(), 1, "main workspace should only see a.txt");
+        assert_eq!(ws2.files[0].path, "a.txt");
+    }
 }

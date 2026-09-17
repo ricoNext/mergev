@@ -60,9 +60,9 @@ pub fn update_repository_status(
     has_conflicts: Option<bool>,
 ) -> Result<(), String> {
     // Normalize to main worktree path
-    let main_path = git::resolve_main_worktree_path(repo_root)
-        .unwrap_or_else(|_| repo_root.to_path_buf());
-    
+    let main_path =
+        git::resolve_main_worktree_path(repo_root).unwrap_or_else(|_| repo_root.to_path_buf());
+
     let root_str = main_path.display().to_string();
     let name = main_path
         .file_name()

@@ -1,6 +1,7 @@
 mod cli;
 mod first_launch;
 mod git;
+mod pty;
 mod repository_history;
 use mergev_core as workspace;
 
@@ -126,16 +127,16 @@ fn load_active_repository_payload(
     update_repository_history_from_workspace(&workspace)?;
 
     let repos = repository_history::get_recent_repositories()?;
-    
+
     let expanded_repo_paths = if should_expand {
         // Resolve main path to expand
-        let main_path = git::resolve_main_worktree_path(&repo.root)
-            .unwrap_or_else(|_| repo.root.clone());
+        let main_path =
+            git::resolve_main_worktree_path(&repo.root).unwrap_or_else(|_| repo.root.clone());
         Some(vec![main_path.display().to_string()])
     } else {
         None
     };
-    
+
     Ok(ActiveRepositoryPayload {
         workspace,
         repos,
@@ -214,10 +215,10 @@ fn activate_repository(
     path: String,
 ) -> Result<ActiveRepositoryPayload, String> {
     let repo_path = PathBuf::from(&path);
-    
+
     // Classify the path to determine if it's a main worktree or linked worktree
     let classification = git::classify_launch_path(&repo_path).ok();
-    
+
     let (repo_root, active_worktree_path, should_expand) = if let Some(class) = classification {
         // Use the active path (which could be a worktree) for loading conflicts
         let active_str = class.active_path.display().to_string();
@@ -226,7 +227,7 @@ fn activate_repository(
         // Fallback: treat as regular repo
         (repo_path, None, false)
     };
-    
+
     let repo = resolve_and_cache_active_repository(&app, &repo_root)?;
     load_active_repository_payload(&app, &repo, active_worktree_path, should_expand)
 }
@@ -251,7 +252,31 @@ fn worktree_status(worktree_path: String) -> Result<git::WorktreeStatus, String>
 #[tauri::command]
 fn remove_worktree(repo_root: String, worktree_path: String, force: bool) -> Result<(), String> {
     let root = resolve_repo_root_arg(&repo_root)?;
-    git::remove_worktree(&root, &PathBuf::from(&worktree_path), force).map_err(|err| err.to_string())
+    git::remove_worktree(&root, &PathBuf::from(&worktree_path), force)
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn list_local_branches(repo_root: String) -> Result<Vec<String>, String> {
+    let root = resolve_repo_root_arg(&repo_root)?;
+    git::list_local_branches(&root).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn add_worktree(
+    repo_root: String,
+    branch: String,
+    base: Option<String>,
+    parent_dir: Option<String>,
+) -> Result<git::WorktreeInfo, String> {
+    let root = resolve_repo_root_arg(&repo_root)?;
+    git::add_worktree(
+        &root,
+        &branch,
+        base.as_deref(),
+        parent_dir.map(PathBuf::from).as_deref(),
+    )
+    .map_err(|err| err.to_string())
 }
 
 #[tauri::command]
@@ -315,9 +340,7 @@ fn remove_repository(app: tauri::AppHandle, path: String) -> Result<(), String> 
     let removed_root = git::resolve_repo_root(&PathBuf::from(&path)).ok();
     let should_clear_active = active.as_ref().is_some_and(|repo| {
         repo.root == PathBuf::from(&path)
-            || removed_root
-                .as_ref()
-                .is_some_and(|root| *root == repo.root)
+            || removed_root.as_ref().is_some_and(|root| *root == repo.root)
     });
 
     if should_clear_active {
@@ -379,16 +402,23 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .manage(pty::PtyState::default())
         .invoke_handler(tauri::generate_handler![
             get_workspace,
+            pty::pty_spawn,
+            pty::pty_write,
+            pty::pty_resize,
+            pty::pty_kill,
             get_mergev_cwd,
             get_recent_repositories,
             open_repository,
             activate_repository,
             refresh_active_repository,
             list_worktrees,
+            list_local_branches,
             worktree_status,
             remove_worktree,
+            add_worktree,
             get_conflict_file,
             get_conflict_count,
             save_conflict_file,

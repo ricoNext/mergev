@@ -15,7 +15,9 @@
         "title": "mergev",
         "width": 1280,
         "height": 800,
-        "minWidth": 960
+        "minWidth": 960,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
       }
     ],
     "security": {
