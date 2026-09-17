@@ -7,6 +7,8 @@
 	--bg-secondary: #f7f3ec;
 	--bg-tertiary: #efe8dc;
 	--bg-surface: #fffaf3;
+	/* 中间面板专用：纯白 */
+	--bg-middle: #ffffff;
 	--bg-hover: #f0ebe3;
 	--bg-active: #e4ddd0;
 	--bg-empty: #f3eee4;
@@ -90,6 +92,8 @@ body.vscode-high-contrast-light {
 	--bg-secondary: #252220;
 	--bg-tertiary: #2f2c28;
 	--bg-surface: #3a3632;
+	/* 中间面板专用：暗色下跟随表面色，避免刺白 */
+	--bg-middle: #3a3632;
 	--bg-hover: #443f3a;
 	--bg-active: #4e4842;
 	--bg-empty: #2a2624;
@@ -273,25 +277,239 @@ button.ghost {
 	background: var(--bg-secondary);
 }
 
+/* 侧边栏与内容区之间的可拖拽分隔条 */
+.sidebar-resizer {
+	width: 6px;
+	cursor: col-resize;
+	background: transparent;
+	border-left: 1px solid var(--border-light);
+	transition: background 0.12s ease;
+	touch-action: none;
+	flex-shrink: 0;
+}
+
+.sidebar-resizer:hover,
+.combined-view.is-resizing .sidebar-resizer {
+	background: var(--bg-active);
+}
+
+/* 拖拽中禁用文本选中，避免拖动时选中页面内容 */
+.combined-view.is-resizing {
+	user-select: none;
+	cursor: col-resize;
+}
+
+/* 中间面板：预留占位（分隔线由两侧的 sidebar-resizer 边框提供） */
+.middle-panel {
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	background: var(--bg-middle);
+}
+
+/* 中间面板 tab 栏：按「项目 + 分支」打开的标签页 */
+.tab-bar {
+	display: flex;
+	align-items: stretch;
+	gap: 0.25rem;
+	padding: 0.375rem 0.5rem 0;
+	border-bottom: 1px solid var(--border-light);
+	background: var(--bg-middle);
+	flex-shrink: 0;
+}
+
+/* tab 滚动区：横向滚动发生在这里，「+」按钮固定在其右侧始终可见 */
+.tab-bar-scroll {
+	display: flex;
+	align-items: stretch;
+	gap: 2px;
+	flex: 1;
+	min-width: 0;
+	overflow-x: auto;
+	/* 纵向禁止滚动：横向滚动条出现时不会把内容挤出纵向滚动条 */
+	overflow-y: hidden;
+}
+
+/* 细横向滚动条（webkit：必须 appearance:none 才能接管 macOS 的 overlay 原生滚动条） */
+.tab-bar-scroll::-webkit-scrollbar {
+	-webkit-appearance: none;
+	height: 2px;
+}
+
+.tab-bar-scroll::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+.tab-bar-scroll::-webkit-scrollbar-thumb {
+	background: var(--border-default);
+	border-radius: 1px;
+}
+
+.tab-bar-scroll::-webkit-scrollbar-thumb:hover {
+	background: var(--text-muted);
+}
+
+.middle-tab {
+	display: flex;
+	align-items: center;
+	gap: 0.375rem;
+	padding: 0.3125rem 0.625rem;
+	font-size: 0.8125rem;
+	color: var(--text-secondary);
+	border: 1px solid transparent;
+	border-bottom: none;
+	border-radius: 6px 6px 0 0;
+	cursor: pointer;
+	white-space: nowrap;
+	max-width: 220px;
+	transition: background 0.12s ease;
+}
+
+.middle-tab:hover {
+	background: var(--bg-hover);
+}
+
+.middle-tab.active {
+	background: var(--bg-middle);
+	color: var(--text-primary);
+	border-color: var(--border-light);
+	/* 盖住 tab-bar 的底边框，与内容区连成一体 */
+	position: relative;
+	margin-bottom: -1px;
+}
+
+.middle-tab-title {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.middle-tab-close {
+	flex-shrink: 0;
+	width: 16px;
+	height: 16px;
+	padding: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	border: none;
+	background: none;
+	color: var(--text-muted);
+	border-radius: 3px;
+	cursor: pointer;
+}
+
+.middle-tab-close:hover {
+	background: var(--bg-hover);
+	color: var(--text-primary);
+}
+
+/* tab 栏末尾常驻的「新建标签页」按钮：位于滚动区外，始终可见 */
+.middle-tab-add {
+	flex-shrink: 0;
+	align-self: center;
+	width: 20px;
+	height: 20px;
+	padding: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	border: none;
+	background: none;
+	color: var(--text-muted);
+	border-radius: 4px;
+	cursor: pointer;
+}
+
+.middle-tab-add:hover {
+	background: var(--bg-hover);
+	color: var(--text-primary);
+}
+
+/* tab 内容区：内容暂为预留占位 */
+.middle-tab-body {
+	position: relative;
+	flex: 1;
+	min-height: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: var(--bg-middle);
+	overflow: hidden;
+}
+
+/* 终端层：每个分支组一层绝对定位覆盖，非激活层隐藏（PTY 会话保持常驻） */
+.terminal-layer {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	min-width: 0;
+}
+
+.terminal-layer[data-active="false"] {
+	display: none;
+}
+
+.terminal-pane {
+	flex: 1;
+	min-width: 0;
+}
+
+.terminal-pane[data-visible="false"] {
+	display: none;
+}
+
+.terminal-pane .xterm {
+	height: 100%;
+	box-sizing: border-box;
+}
+.xterm .xterm-viewport {
+	background-color: transparent!important;
+}
+.middle-tab-hint {
+	font-size: 0.75rem;
+}
+
 .repository-sidebar {
 	background: var(--bg-sidebar);
-	border-right: 1px solid var(--border-light);
 	display: flex;
 	flex-direction: column;
 	height: 100%;
 }
 
-.sidebar-header {
-	padding: 0.75rem 1rem;
+/* 侧边栏顶部：mergev 品牌标题（macOS Overlay 标题栏下承担窗口拖拽区域，
+   padding-left 避让红绿灯） */
+.sidebar-brand {
+	height: 52px;
+	padding: 0 1rem;
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
 	border-bottom: 1px solid var(--border-light);
+	flex-shrink: 0;
+}
+
+.macos-title-overlay .sidebar-brand {
+	padding-left: 80px;
+}
+
+.sidebar-brand-title {
+	font-size: 0.9375rem;
+	font-weight: 700;
+	letter-spacing: 0.02em;
+	color: var(--text-primary);
+	user-select: none;
+}
+
+/* 「项目」分区标题行 */
+.sidebar-section-header {
+	padding: 0.75rem 1rem 0.5rem;
 	display: flex;
 	justify-content: space-between;
 	align-items: center;
 	flex-shrink: 0;
 }
 
-.sidebar-header h2 {
-	margin: 0;
+.sidebar-section-title {
 	font-size: 0.75rem;
 	font-weight: 600;
 	text-transform: uppercase;
@@ -305,12 +523,33 @@ button.ghost {
 	align-items: center;
 }
 
+.sidebar-icon-button {
+	width: 24px;
+	height: 24px;
+	padding: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: transparent;
+	border: none;
+	border-radius: 4px;
+	color: var(--text-secondary);
+	cursor: pointer;
+	transition: background 0.12s ease, color 0.12s ease;
+}
+
+.sidebar-icon-button:hover {
+	background: var(--bg-hover);
+	color: var(--text-primary);
+}
+
 .repository-list {
 	flex: 1;
 	overflow-y: auto;
 	padding: 0.25rem 0;
 }
 
+/* 旧版仓库行（RepositoriesScreen 仍在使用） */
 .repository-item {
 	padding: 0.5rem 0.75rem;
 	margin-bottom: 0;
@@ -331,6 +570,346 @@ button.ghost {
 	background: var(--bg-active);
 }
 
+.repository-group {
+	display: flex;
+	flex-direction: column;
+}
+
+/* 一级：项目行（仅名称，不展示分支/路径/状态） */
+.project-row {
+	padding: 0.375rem 0.5rem;
+	display: flex;
+	align-items: center;
+	gap: 0.25rem;
+	transition: background 0.12s ease;
+	cursor: pointer;
+}
+
+.project-row:hover {
+	background: var(--bg-hover);
+}
+
+.project-chevron {
+	width: 16px;
+	height: 16px;
+	padding: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: none;
+	border: none;
+	border-radius: 3px;
+	color: var(--text-secondary);
+	cursor: pointer;
+	flex-shrink: 0;
+	/* 与 ⋯、+ 一致：仅悬浮所在行时显示（is-hidden 仍用 visibility 占位） */
+	opacity: 0;
+	transition: opacity 0.12s ease, transform 0.12s ease, color 0.12s ease;
+}
+
+.project-row:hover .project-chevron {
+	opacity: 1;
+}
+
+.project-chevron:hover {
+	color: var(--text-primary);
+	background: var(--bg-active);
+}
+
+.project-chevron[aria-expanded="true"] {
+	transform: rotate(90deg);
+}
+
+.project-chevron.is-hidden {
+	visibility: hidden;
+	pointer-events: none;
+}
+
+.project-add-button {
+	width: 16px;
+	height: 16px;
+	padding: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: none;
+	border: none;
+	border-radius: 3px;
+	color: var(--text-secondary);
+	cursor: pointer;
+	flex-shrink: 0;
+	/* 与 ⋯ 一致：仅悬浮所在行时显示 */
+	opacity: 0;
+	transition: opacity 0.12s ease, color 0.12s ease, background 0.12s ease;
+}
+
+.project-row:hover .project-add-button {
+	opacity: 1;
+}
+
+.project-add-button:hover {
+	color: var(--text-primary);
+	background: var(--bg-active);
+}
+
+/* 「新建 worktree」弹窗 */
+.modal-overlay {
+	position: fixed;
+	inset: 0;
+	background: var(--overlay);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	z-index: 2000;
+}
+
+.modal {
+	background: var(--bg-surface);
+	border: 1px solid var(--border-menu);
+	border-radius: 8px;
+	box-shadow: var(--shadow-menu);
+	min-width: 360px;
+	max-width: min(520px, calc(100vw - 4rem));
+}
+
+.modal-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 0.875rem 1rem 0.75rem;
+	border-bottom: 1px solid var(--border-menu);
+}
+
+.modal-header h3 {
+	margin: 0;
+	font-size: 1rem;
+	font-weight: 600;
+	color: var(--text-primary);
+}
+
+.modal-close {
+	width: 1.5rem;
+	height: 1.5rem;
+	padding: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: none;
+	border: none;
+	border-radius: 4px;
+	color: var(--text-secondary);
+	cursor: pointer;
+}
+
+.modal-close:hover {
+	background: var(--bg-hover);
+	color: var(--text-primary);
+}
+
+.modal-body {
+	padding: 1rem;
+	display: flex;
+	flex-direction: column;
+	gap: 0.875rem;
+}
+
+/* 「新建 worktree」表单 */
+.form-field {
+	display: flex;
+	flex-direction: column;
+	gap: 0.375rem;
+}
+
+.form-label {
+	font-size: 0.8125rem;
+	color: var(--text-secondary);
+}
+
+.form-required {
+	color: var(--error);
+}
+
+.form-input,
+.form-select {
+	width: 100%;
+	box-sizing: border-box;
+	padding: 0.4375rem 0.625rem;
+	font-size: 0.8125rem;
+	color: var(--text-primary);
+	background: var(--bg-surface);
+	border: 1px solid var(--border-menu);
+	border-radius: 4px;
+	outline: none;
+}
+
+.form-input:focus,
+.form-select:focus {
+	border-color: var(--text-secondary);
+}
+
+.form-input::placeholder {
+	color: var(--text-muted);
+}
+
+.form-row {
+	display: flex;
+	gap: 0.5rem;
+	align-items: stretch;
+}
+
+.form-row .form-input {
+	flex: 1;
+	min-width: 0;
+}
+
+.form-browse {
+	flex-shrink: 0;
+	padding: 0 0.75rem;
+	font-size: 0.8125rem;
+	color: var(--text-primary);
+	background: var(--bg-hover);
+	border: 1px solid var(--border-menu);
+	border-radius: 4px;
+	cursor: pointer;
+}
+
+.form-browse:hover {
+	background: var(--bg-active);
+}
+
+.form-error {
+	margin: 0;
+	font-size: 0.8125rem;
+	color: var(--error);
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.modal-footer {
+	display: flex;
+	justify-content: flex-end;
+	gap: 0.5rem;
+	padding: 0.75rem 1rem;
+	border-top: 1px solid var(--border-menu);
+}
+
+.modal-cancel {
+	padding: 0.4375rem 0.875rem;
+	font-size: 0.8125rem;
+	color: var(--text-primary);
+	background: transparent;
+	border: 1px solid var(--border-menu);
+	border-radius: 4px;
+	cursor: pointer;
+}
+
+.modal-cancel:hover {
+	background: var(--bg-hover);
+}
+
+.modal-submit {
+	padding: 0.4375rem 1rem;
+	font-size: 0.8125rem;
+	color: var(--bg-surface);
+	background: var(--text-primary);
+	border: 1px solid var(--text-primary);
+	border-radius: 4px;
+	cursor: pointer;
+}
+
+.modal-submit:disabled {
+	opacity: 0.45;
+	cursor: not-allowed;
+}
+
+.modal-submit:not(:disabled):hover {
+	opacity: 0.85;
+}
+
+.project-info {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+}
+
+.project-folder-icon {
+	flex-shrink: 0;
+	color: var(--text-secondary);
+}
+
+.project-name {
+	font-size: 0.8125rem;
+	font-weight: 600;
+	color: var(--text-primary);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* 二级：分支行（单行，仅分支名） */
+.worktree-item {
+	padding: 0.3125rem 0.75rem 0.3125rem 1.75rem;
+	border-radius: 0;
+	border: none;
+	transition: background 0.12s ease;
+	cursor: pointer;
+	display: flex;
+	align-items: center;
+	gap: 0.375rem;
+}
+
+.worktree-item:hover {
+	background: var(--bg-hover);
+}
+
+.worktree-item.active {
+	background: var(--bg-active);
+}
+
+.worktree-item .repository-branch-icon {
+	flex-shrink: 0;
+	color: var(--text-secondary);
+}
+
+.worktree-branch-name {
+	font-size: 0.8125rem;
+	font-weight: 600;
+	color: var(--text-primary);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.worktree-conflict-indicator {
+	color: var(--error);
+	font-size: 0.625rem;
+	margin-left: 0.25rem;
+	flex-shrink: 0;
+}
+
+/* 分支行右侧的类型标签：主 worktree（绿）/ Linked（灰） */
+.worktree-tag {
+	flex-shrink: 0;
+	margin-left: auto;
+	font-size: 0.6875rem;
+	line-height: 1;
+	padding: 0.1875rem 0.4375rem;
+	border-radius: 999px;
+	color: var(--text-secondary);
+	background: var(--bg-hover);
+	border: 1px solid var(--border-default);
+	white-space: nowrap;
+}
+
+.worktree-tag.main {
+	color: var(--success);
+	background: var(--success-bg);
+	border-color: var(--success-border);
+}
+
+/* 仓库详情样式（RepositoryListContent / RepositoriesScreen 使用） */
 .repository-info {
 	flex: 1;
 	min-width: 0;
@@ -437,9 +1016,32 @@ button.ghost {
 	vertical-align: baseline;
 }
 
+.repository-branch {
+	display: inline;
+	font-size: inherit;
+	color: inherit;
+	background: none;
+	padding: 0;
+	border-radius: 0;
+	margin-right: 0;
+	max-width: none;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	vertical-align: baseline;
+}
+
+.repository-branch-icon {
+	flex-shrink: 0;
+	color: var(--text-secondary);
+}
+
 .repository-actions {
 	position: relative;
 	flex-shrink: 0;
+	display: flex;
+	align-items: center;
+	gap: 0.125rem;
 }
 
 .repository-menu-trigger {
@@ -459,8 +1061,9 @@ button.ghost {
 	transition: opacity 0.12s ease;
 }
 
-.repository-item:hover .repository-menu-trigger,
-.repository-item.active .repository-menu-trigger {
+.project-row:hover .repository-menu-trigger,
+.project-row.active .repository-menu-trigger,
+.repository-menu-trigger.is-open {
 	opacity: 1;
 }
 
@@ -528,63 +1131,18 @@ button.ghost {
 	color: var(--text-primary);
 }
 
-.context-menu-item:hover {
+.context-menu-item:hover:not(:disabled) {
 	background: var(--bg-hover);
-	color: var(--error);
 }
 
-.repository-remove {
-	flex-shrink: 0;
-	width: 1.5rem;
-	height: 1.5rem;
-	padding: 0;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	font-size: 1.25rem;
-	line-height: 1;
-	border: 1px solid transparent;
-	background: transparent;
-	color: var(--text-secondary);
-	border-radius: 3px;
-	opacity: 0;
-	transition: opacity 0.15s ease;
-}
-
-.repository-item:hover .repository-remove {
-	opacity: 1;
-}
-
-.repository-remove:hover {
+.context-menu-item.danger:hover:not(:disabled) {
 	background: var(--error-bg);
 	color: var(--error);
-	border-color: var(--error-border);
 }
 
-.repository-branch {
-	display: inline;
-	font-size: inherit;
-	color: inherit;
-	background: none;
-	padding: 0;
-	border-radius: 0;
-	margin-right: 0;
-	max-width: none;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	vertical-align: baseline;
-}
-
-.repository-badge {
-	display: inline-block;
-	font-size: 0.75rem;
-	color: var(--error);
-	background: var(--error-bg);
-	padding: 0.125rem 0.5rem;
-	border-radius: 3px;
-	white-space: nowrap;
-	vertical-align: middle;
+.context-menu-item:disabled {
+	opacity: 0.4;
+	cursor: default;
 }
 
 .close-button {
@@ -645,7 +1203,7 @@ button.ghost {
 .conflicts-body {
 	min-height: 0;
 	display: grid;
-	grid-template-columns: 1fr 200px;
+	grid-template-columns: 1fr 110px;
 }
 
 .conflicts-table-wrap {
@@ -1378,6 +1936,16 @@ button.ghost {
 	transition:
 		background-color 0.2s ease,
 		border-color 0.2s ease;
+}
+
+/* macOS Overlay 标题栏：红绿灯覆盖在 topbar 左上角，仅补内边距避让 */
+.macos-title-overlay .topbar {
+	padding-left: 80px;
+}
+
+/* macOS Overlay 标题栏：仓库列表页头部同样需要避让红绿灯 */
+.macos-title-overlay .repositories .conflicts-header {
+	padding-left: 80px;
 }
 
 .topbar-main,

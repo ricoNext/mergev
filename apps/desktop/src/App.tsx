@@ -12,12 +12,13 @@ import { FirstLaunchDialog } from "./FirstLaunchDialog";
 import { RepositoriesScreen } from "./screens/RepositoriesScreen";
 import { ConflictsScreen } from "./screens/ConflictsScreen";
 import { CombinedScreen } from "./screens/CombinedScreen";
+import { EmptyScreen, ErrorScreen, LoadingScreen } from "./screens/StatusScreens";
+import { saveAcceptedResolution } from "./mergeActions";
 import {
   MergeScreen,
   type MergeScreenRuntime,
 } from "@mergev/merge-ui/screens/MergeScreen";
-import { buildSessionFromDocument, rebuildSession, serializeResult } from "@mergev/merge-ui/core/mergeSession";
-import { applyAccept, emptyResolution } from "@mergev/merge-ui/utils/conflictUtils";
+import { buildSessionFromDocument } from "@mergev/merge-ui/core/mergeSession";
 import { fileNameOf } from "@mergev/merge-ui/utils/stringUtils";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import { updateSyntaxTheme } from "@mergev/merge-ui/syntaxHighlight";
@@ -57,6 +58,37 @@ function sortWorkspaceFiles(workspace: WorkspaceSnapshot): WorkspaceSnapshot {
 
 function firstConflictPath(workspace: WorkspaceSnapshot | null): string | null {
   return workspace?.files.length ? workspace.files[0].path : null;
+}
+
+// 侧边栏项目展开状态持久化：重启后恢复上次的展开情况
+const EXPANDED_REPOS_KEY = "mergev.expanded-repos";
+
+/** 读取保存的展开列表，并过滤掉已不在仓库列表中的路径（被移除的项目） */
+function loadSavedExpandedRepos(repos: RepositoryItem[]): string[] {
+  try {
+    const raw = localStorage.getItem(EXPANDED_REPOS_KEY);
+    if (!raw) {
+      return [];
+    }
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    const known = new Set(repos.map((repo) => repo.path));
+    return parsed.filter(
+      (path): path is string => typeof path === "string" && known.has(path),
+    );
+  } catch {
+    return [];
+  }
+}
+
+function saveExpandedRepos(paths: string[]) {
+  try {
+    localStorage.setItem(EXPANDED_REPOS_KEY, JSON.stringify(paths));
+  } catch {
+    // localStorage 不可用时静默降级为不持久化
+  }
 }
 
 function nextRepositoryPathAfterRemoval(
@@ -144,6 +176,8 @@ function App() {
     try {
       // 判断激活仓库：MERGEV_CWD > 第一个仓库
       let activeRepoPath: string | null = null;
+      let activeWorktreePath: string | null = null;
+      let expandedRepoPaths: string[] = [];
       const mergev_cwd = await invoke<string | null>("get_mergev_cwd");
       let workspace: WorkspaceSnapshot | null = null;
       let repos: RepositoryItem[] = [];
@@ -156,10 +190,13 @@ function App() {
           workspace = sortWorkspaceFiles(activated.workspace);
           repos = activated.repos;
           activeRepoPath = workspace.root || mergev_cwd;
+          activeWorktreePath = activated.activeWorktreePath || activeRepoPath;
+          expandedRepoPaths = activated.expandedRepoPaths || [];
         } catch (error) {
           console.error("Failed to load repository:", error);
           workspace = null;
           activeRepoPath = null;
+          activeWorktreePath = null;
         }
       }
 
@@ -177,6 +214,8 @@ function App() {
           workspace = sortWorkspaceFiles(activated.workspace);
           repos = activated.repos;
           activeRepoPath = workspace.root || activeRepoPath;
+          activeWorktreePath = activated.activeWorktreePath || activeRepoPath;
+          expandedRepoPaths = activated.expandedRepoPaths || [];
         } catch (error) {
           console.error("Failed to load repository:", error);
           workspace = null;
@@ -185,6 +224,11 @@ function App() {
 
       const selectedFilePath = firstConflictPath(workspace);
 
+      // 恢复上次会话的展开状态；与后端提示合并（CLI 启动仍自动展开激活仓库）
+      expandedRepoPaths = Array.from(
+        new Set([...loadSavedExpandedRepos(repos), ...expandedRepoPaths]),
+      );
+
       if (repoRequestRef.current !== requestId) {
         return;
       }
@@ -192,6 +236,8 @@ function App() {
         kind: "combined",
         repos,
         activeRepoPath,
+        activeWorktreePath: activeWorktreePath || activeRepoPath,
+        expandedRepoPaths,
         workspace,
         selectedFilePath,
         busy: false,
@@ -232,6 +278,8 @@ function App() {
         kind: "combined",
         repos: refreshed.repos,
         activeRepoPath: workspace.root,
+        activeWorktreePath: workspace.root,
+        expandedRepoPaths: [],
         workspace,
         selectedFilePath,
         busy: false,
@@ -323,6 +371,8 @@ function App() {
             ...current,
             repos,
             activeRepoPath: null,
+            activeWorktreePath: null,
+            expandedRepoPaths: [],
             workspace: null,
             selectedFilePath: null,
             busy: false,
@@ -351,6 +401,8 @@ function App() {
             ...current,
             repos: activated.repos,
             activeRepoPath: workspace.root || nextRepoPath,
+            activeWorktreePath: workspace.root || nextRepoPath,
+            expandedRepoPaths: loadSavedExpandedRepos(activated.repos),
             workspace,
             selectedFilePath,
             busy: false,
@@ -372,6 +424,8 @@ function App() {
             ...current,
             repos,
             activeRepoPath: null,
+            activeWorktreePath: null,
+            expandedRepoPaths: [],
             workspace: null,
             selectedFilePath: null,
             busy: false,
@@ -427,6 +481,8 @@ function App() {
           kind: "combined",
           repos: activated.repos,
           activeRepoPath: workspace.root || path,
+          activeWorktreePath: workspace.root || path,
+          expandedRepoPaths: [],
           workspace,
           selectedFilePath: firstConflictPath(workspace),
           busy: false,
@@ -505,6 +561,21 @@ function App() {
     }
   }
 
+  function toggleRepoExpanded(repoPath: string) {
+    if (view.kind !== "combined") {
+      return;
+    }
+
+    const expanded = view.expandedRepoPaths;
+    const isExpanded = expanded.includes(repoPath);
+    const newExpanded = isExpanded
+      ? expanded.filter((p) => p !== repoPath)
+      : [...expanded, repoPath];
+
+    saveExpandedRepos(newExpanded);
+    setView({ ...view, expandedRepoPaths: newExpanded });
+  }
+
   function selectConflictFile(path: string) {
     if (view.kind !== "conflicts") {
       return;
@@ -555,7 +626,7 @@ function App() {
     const requestId = ++repoRequestRef.current;
     setView((current) =>
       current.kind === "combined"
-        ? { ...current, activeRepoPath: repoPath, busy: true, actionError: null }
+        ? { ...current, activeRepoPath: repoPath, activeWorktreePath: repoPath, busy: true, actionError: null }
         : current,
     );
 
@@ -568,13 +639,20 @@ function App() {
       }
       const workspace = sortWorkspaceFiles(activated.workspace);
       const selectedFilePath = firstConflictPath(workspace);
+      const activeRepoPath = workspace.root || repoPath;
+      const activeWorktreePath = activated.activeWorktreePath || activeRepoPath;
 
       setView((current) =>
         current.kind === "combined"
           ? {
               ...current,
               repos: activated.repos,
-              activeRepoPath: workspace.root || repoPath,
+              activeRepoPath,
+              activeWorktreePath,
+              // 后端仅在需要自动展开时返回（如激活 linked worktree）；
+              // 未指定时保留当前展开状态，避免切到主分支时折叠整个项目组
+              expandedRepoPaths:
+                activated.expandedRepoPaths ?? current.expandedRepoPaths,
               workspace,
               selectedFilePath,
               busy: false,
@@ -617,6 +695,8 @@ function App() {
         kind: "combined",
         repos: activated.repos,
         activeRepoPath: workspace.root || repoPath,
+        activeWorktreePath: workspace.root || repoPath,
+        expandedRepoPaths: loadSavedExpandedRepos(activated.repos),
         workspace,
         selectedFilePath,
         busy: false,
@@ -686,6 +766,46 @@ function App() {
     }
   }
 
+  // 整文件采纳单侧：combined 视图入口（保存后刷新工作区）
+  async function acceptSideInCombined(side: "ours" | "theirs") {
+    if (view.kind !== "combined" || !view.workspace || !view.selectedFilePath) {
+      return;
+    }
+    const repoRoot = view.workspace.root;
+    const path = view.selectedFilePath;
+    setView({ ...view, busy: true, actionError: null });
+    try {
+      await saveAcceptedResolution(side, path, repoRoot);
+      await refreshActiveRepository(path);
+    } catch (error) {
+      setView({
+        ...view,
+        busy: false,
+        actionError: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  // 整文件采纳单侧：conflicts 视图入口（保存后刷新冲突列表）
+  async function acceptSideInConflicts(side: "ours" | "theirs") {
+    if (view.kind !== "conflicts") {
+      return;
+    }
+    const repoRoot = view.workspace.root;
+    const path = view.selectedPath;
+    setView({ ...view, busy: true, actionError: null });
+    try {
+      await saveAcceptedResolution(side, path, repoRoot);
+      await loadConflicts();
+    } catch (error) {
+      setView({
+        ...view,
+        busy: false,
+        actionError: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   useEffect(() => {
     void checkFirstLaunch();
     void loadInitial();
@@ -702,22 +822,15 @@ function App() {
   }
 
   if (view.kind === "loading") {
-    return (
-      <main className="screen">
-        <p className="muted">正在检测仓库与冲突…</p>
-      </main>
-    );
+    return <LoadingScreen />;
   }
 
   if (view.kind === "error") {
     return (
-      <main className="screen">
-        <h1>无法打开工作区</h1>
-        <p className="error">{view.message}</p>
-        <button type="button" onClick={() => void loadConflicts()}>
-          重试
-        </button>
-      </main>
+      <ErrorScreen
+        message={view.message}
+        onRetry={() => void loadConflicts()}
+      />
     );
   }
 
@@ -733,20 +846,10 @@ function App() {
 
   if (view.kind === "empty") {
     return (
-      <main className="screen empty">
-        <p className="eyebrow">mergev</p>
-        <h1>
-          {view.workspace.repoName}
-          <span className="muted"> · {view.workspace.branch}</span>
-        </h1>
-        <p>当前没有需要解决的合并冲突。</p>
-        <p className="muted">
-          在产生冲突的 merge / rebase 后，再于仓库目录执行 mergev。
-        </p>
-        <button type="button" onClick={() => void loadConflicts()}>
-          刷新
-        </button>
-      </main>
+      <EmptyScreen
+        workspace={view.workspace}
+        onRefresh={() => void loadConflicts()}
+      />
     );
   }
 
@@ -757,55 +860,11 @@ function App() {
         theme={theme}
         onToggleTheme={toggleTheme}
         onSwitchRepository={(path) => void switchRepository(path)}
+        onToggleExpanded={toggleRepoExpanded}
         onSelect={selectCombinedFile}
         onRemoveRepository={(path) => void removeRepository(path)}
         onAddRepository={() => void addRepository()}
-        onAccept={async (side) => {
-          if (!view.workspace || !view.selectedFilePath) {
-            return;
-          }
-          const repoRoot = view.workspace.root;
-          setView({ ...view, busy: true, actionError: null });
-          try {
-            const document = await invoke<MergeDocument>("get_merge_document", {
-              path: view.selectedFilePath,
-              repoRoot,
-            });
-            const session = buildSessionFromDocument(document);
-
-            const resolutions = session.conflicts.map(() =>
-              applyAccept(emptyResolution(), side),
-            );
-
-            const updatedSession = rebuildSession(
-              session.document,
-              resolutions,
-              session.activeConflict,
-              true,
-            );
-
-            const endsWithNewline = updatedSession.document.working.endsWith("\n");
-            const result = serializeResult(
-              updatedSession.resultLines,
-              endsWithNewline,
-            );
-            await invoke("save_merge_result", {
-              path: updatedSession.document.path,
-              result,
-              stage: true,
-              repoRoot,
-            });
-
-            await refreshActiveRepository(view.selectedFilePath);
-          } catch (error) {
-            setView({
-              ...view,
-              busy: false,
-              actionError:
-                error instanceof Error ? error.message : String(error),
-            });
-          }
-        }}
+        onAccept={(side) => acceptSideInCombined(side)}
         onMerge={() => void openMergeFromCombined(view.selectedFilePath!)}
         onOpenPath={(path) => void openMergeFromCombined(path)}
         onClose={() => void invoke("close_app")}
@@ -819,53 +878,7 @@ function App() {
         view={view}
         onSelect={selectConflictFile}
         onRefresh={() => void loadConflicts(view.selectedPath)}
-        onAccept={async (side) => {
-          const repoRoot = view.workspace.root;
-          setView({ ...view, busy: true, actionError: null });
-          try {
-            // 1. 加载合并文档
-            const document = await invoke<MergeDocument>("get_merge_document", {
-              path: view.selectedPath,
-              repoRoot,
-            });
-            const session = buildSessionFromDocument(document);
-
-            // 2. 对所有冲突块应用该侧的决策
-            const resolutions = session.conflicts.map(() =>
-              applyAccept(emptyResolution(), side),
-            );
-
-            const updatedSession = rebuildSession(
-              session.document,
-              resolutions,
-              session.activeConflict,
-              true,
-            );
-
-            // 3. 保存合并结果
-            const endsWithNewline = updatedSession.document.working.endsWith("\n");
-            const result = serializeResult(
-              updatedSession.resultLines,
-              endsWithNewline,
-            );
-            await invoke("save_merge_result", {
-              path: updatedSession.document.path,
-              result,
-              stage: true,
-              repoRoot,
-            });
-
-            // 4. 刷新列表
-            await loadConflicts();
-          } catch (error) {
-            setView({
-              ...view,
-              busy: false,
-              actionError:
-                error instanceof Error ? error.message : String(error),
-            });
-          }
-        }}
+        onAccept={(side) => acceptSideInConflicts(side)}
         onMerge={() => void openMerge(view.selectedPath, view.workspace)}
         onOpenPath={(path) => void openMerge(path, view.workspace)}
         onClose={() => void invoke("close_app")}

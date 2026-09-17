@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::git;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepositoryItem {
@@ -11,6 +13,8 @@ pub struct RepositoryItem {
     pub last_opened: String,
     pub branch: Option<String>,
     pub has_conflicts: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worktrees: Option<Vec<git::WorktreeInfo>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,8 +59,12 @@ pub fn update_repository_status(
     branch: Option<String>,
     has_conflicts: Option<bool>,
 ) -> Result<(), String> {
-    let root_str = repo_root.display().to_string();
-    let name = repo_root
+    // Normalize to main worktree path
+    let main_path =
+        git::resolve_main_worktree_path(repo_root).unwrap_or_else(|_| repo_root.to_path_buf());
+
+    let root_str = main_path.display().to_string();
+    let name = main_path
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("unknown")
@@ -64,12 +72,15 @@ pub fn update_repository_status(
 
     let mut history = load_history()?;
     let last_opened = chrono::Local::now().to_rfc3339();
+    // 每次激活仓库时刷新该仓库的 worktree 列表，供前端渲染展开箭头
+    let worktrees = git::list_worktrees(&main_path).ok();
     let item = RepositoryItem {
         path: root_str.clone(),
         name,
         last_opened,
         branch,
         has_conflicts,
+        worktrees,
     };
 
     if let Some(existing) = history
@@ -91,23 +102,66 @@ pub fn update_repository_status(
 }
 
 pub fn get_recent_repositories() -> Result<Vec<RepositoryItem>, String> {
-    let history = load_history()?;
+    let mut history = load_history()?;
+    let mut changed = false;
 
-    // Keep this lightweight: startup should not rescan every historical repo.
     let updated: Vec<RepositoryItem> = history
         .repositories
-        .into_iter()
-        .filter_map(|item| {
+        .drain(..)
+        .filter_map(|mut item| {
             let path = PathBuf::from(&item.path);
             if !path.exists() {
+                changed = true;
                 return None; // 过滤掉不存在的仓库
+            }
+
+            // Migrate old worktree paths to main repo paths
+            if let Ok(main_path) = git::resolve_main_worktree_path(&path) {
+                let main_str = main_path.display().to_string();
+                if main_str != item.path {
+                    // This was a linked worktree path, update it to main
+                    item.path = main_str;
+                    item.name = main_path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+                    changed = true;
+                }
+            }
+
+            // Fill in the worktree list for old entries (once, then persisted)
+            // so the sidebar can render the expand arrow.
+            if item.worktrees.is_none() {
+                let scan_path = PathBuf::from(&item.path);
+                match git::list_worktrees(&scan_path) {
+                    Ok(worktrees) => {
+                        item.worktrees = Some(worktrees);
+                        changed = true;
+                    }
+                    Err(_) => {}
+                }
             }
 
             Some(item)
         })
         .collect();
 
-    Ok(updated)
+    // Deduplicate by path (in case migration created duplicates)
+    let mut seen = std::collections::HashSet::new();
+    let deduplicated: Vec<RepositoryItem> = updated
+        .into_iter()
+        .filter(|item| seen.insert(item.path.clone()))
+        .collect();
+
+    // Persist migration results and newly filled worktree lists so the next
+    // startup does not repeat the scan.
+    if changed {
+        history.repositories = deduplicated.clone();
+        save_history(&history)?;
+    }
+
+    Ok(deduplicated)
 }
 
 pub fn remove_repository(repo_path: &str) -> Result<(), String> {
