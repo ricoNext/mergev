@@ -74,10 +74,6 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
 
-apps/vscode/.vsix-staging/
-apps/vscode/*.vsix
-apps/vscode/bin/
-apps/vscode/media/merge-webview*
 
 docs/
 post-to-wechat/

@@ -4,19 +4,15 @@
   "type": "module",
   "workspaces": [
     "apps/desktop",
-    "apps/vscode",
     "packages/merge-ui"
   ],
   "scripts": {
     "dev:desktop": "bun run --filter mergev-desktop dev",
     "build:desktop": "bun run --filter mergev-desktop build",
-    "build:vscode": "bun run --filter mergev-vscode compile",
-    "build": "bun run build:desktop && bun run build:vscode",
+    "build": "bun run build:desktop",
     "test": "bun run --filter @mergev/merge-ui test",
     "test:coverage": "bun run --filter @mergev/merge-ui test:coverage",
     "check:rust": "cargo check --workspace",
-    "package:vscode": "bun run --filter mergev-vscode package",
-    "release:desktop": "bun scripts/release-desktop.ts",
-    "release:vscode": "bun scripts/release-vscode.ts"
+    "release:desktop": "bun scripts/release-desktop.ts"
   }
 }

@@ -1995,15 +1995,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mergev-sidecar"
-version = "1.0.1"
-dependencies = [
- "mergev-core",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "mime"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
